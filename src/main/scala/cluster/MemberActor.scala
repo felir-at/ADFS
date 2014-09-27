@@ -13,10 +13,17 @@ import akka.cluster.Cluster
 class MemberActor(dataDir: File) extends Actor with ActorLogging {
   val cluster = Cluster(context.system)
 
-  for {
-    file <- dataDir.listFiles()
-  } context.actorOf(PhysicalFileActor.props(file))
 
+  override def preStart(): Unit = {
+    val fileRegister = context.actorOf(Props[FileRegistry], "registry")
+
+    for {
+      file <- dataDir.listFiles()
+    } {
+      context.actorOf(PhysicalFileActor.props(file))
+    }
+
+  }
 
   override def receive: Receive = {
     case a => println(a)
