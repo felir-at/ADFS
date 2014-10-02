@@ -3,7 +3,7 @@ import java.io.File
 import akka.actor.ActorSystem
 import akka.cluster.Cluster
 import cluster.FileRegistry.RegisterFile
-import cluster.MemberActor
+import cluster.{FileStorage, MemberActor}
 import com.typesafe.config.ConfigFactory
 
 import utils.remoteConfig
@@ -14,9 +14,12 @@ import utils.remoteConfig
 object Main extends App {
 
   val commonConfig = ConfigFactory.load()
+  println(commonConfig)
 
-  val system1 = ActorSystem("system", remoteConfig("127.0.0.1", 2551, commonConfig))
-  system1.actorOf(MemberActor.props(new File("/tmp/system1")), "node")
+
+//  FileStorage("system", "localhost", 2551)
+//  val system1 = ActorSystem("system", remoteConfig("127.0.0.1", 2551, commonConfig))
+//  system1.actorOf(MemberActor.props(new File("/tmp/system1")), "node")
 
   val system2 = ActorSystem("system", remoteConfig("127.0.0.1", 2552, commonConfig))
   system2.actorOf(MemberActor.props(new File("/tmp/system2")), "node")
