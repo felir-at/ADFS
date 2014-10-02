@@ -1,6 +1,7 @@
 *.class
 relevant-papers/
 *.log
+dataDir/
 
 # sbt specific
 .cache/
