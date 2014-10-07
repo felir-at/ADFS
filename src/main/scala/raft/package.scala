@@ -49,25 +49,31 @@ package object raft {
     def getCurrentTerm: Int
 
     def setVotedFor(serverId: Int)
-    def getVotedFor: Int
+    def getVotedFor: Option[Int]
 
   }
 
-  case class InMemoryPersistence[Tuple2[String, Int], Map[String, Int]]() {
+  case class InMemoryPersistence() extends Persistence[Tuple2[String, Int], Map[String, Int]] {
     var logs = Vector[Tuple2[Int, Tuple2[String, Int]]]()
     var currentTerm: Int = 0
+    var votedFor: Option[Int] = None
 
-    def appendLog(log: Tuple2[String, Int]): Unit = {
-      val y: Tuple2[Int, Tuple2[String, Int]] = Pair(getCurrentTerm, log)
-      logs = logs :+ y
+    override def appendLog(log: Tuple2[String, Int]): Unit = {
+      logs = logs :+ Pair(getCurrentTerm, log)
       ()
     }
 
-    def setCurrentTerm(term: Int) = {
+    override def setCurrentTerm(term: Int) = {
       currentTerm = term
     }
 
-    def getCurrentTerm() = currentTerm
+    override def getCurrentTerm = currentTerm
+
+    override def snapshot: Map[String, Int] = ???
+
+    override def getVotedFor: Option[Int] = votedFor
+
+    override def setVotedFor(serverId: Int): Unit = { votedFor = Some(serverId) }
   }
 
 }
