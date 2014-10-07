@@ -51,7 +51,7 @@ class FileRegistry extends Actor with ActorLogging {
       log.debug(s"Request received to register $path")
 
       context.become(
-        updatedWith(mapping + (path -> (mapping(path) + sender))))
+        updatedWith(mapping + (path -> (mapping.getOrElse(path, Set()) + sender))))
     }
     case SyncRequest => sender ! SyncResponse(mapping)
     case SyncResponse(_mapping: Mapping) => context.become(updatedWith(merge(mapping, _mapping)))
