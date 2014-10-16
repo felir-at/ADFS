@@ -28,9 +28,11 @@ package object raft {
 
   sealed trait RPC
   case class AppendEntries[T](term: Int, leaderPath: ActorPath, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) extends RPC
-  case class AppendEntriesResult(term: Int, succ: Boolean) extends RPC
+  case class TermExpired(newTerm: Int) extends RPC
+  case object InconsistentLog extends RPC
+//  case class AppendEntriesResult(term: Int, succ: Boolean) extends RPC
 
-  case class RequestVote(term: Int, id: Int, lastLogIndex: Int, lastLogTerm: Int) extends RPC
+  case class RequestVote(term: Int, lastLogIndex: Int, lastLogTerm: Int) extends RPC
   case object Vote extends RPC
 
   case class ClientCommand[T](t: T) extends RPC
@@ -38,6 +40,20 @@ package object raft {
   case object WrongLeader extends RPC
   case class ClientCommandResults(status: Try[Any]) extends RPC
 
+
+  /** The FSM whose state are replicated all over our cluster
+   *
+   * @tparam S
+   * @tparam D
+   */
+  trait RaftFSM[S, D] extends FSM[S, D] {
+    /** As D.Ongaro stated here https://groups.google.com/d/msg/raft-dev/KIozjYuq5m0/XsmYAzLpOikJ, lastApplied
+      * should be as durable as the state machine
+     *
+     * @return
+     */
+    def lastApplied = Int
+  }
 
   /**
    *
@@ -49,17 +65,15 @@ package object raft {
 
     when(Follower, stateTimeout = 100 milliseconds) {
       case Event(a: AppendEntries[T], State(commitIndex, lastApplied, _)) => {
-
         val AppendEntries(term: Int, leaderId: ActorPath, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) = a
-
         val currentTerm = persistence.getCurrentTerm
+
         if (term < currentTerm) {
-          stay replying false
-        } else if (persistence.getTermAt(prevLogIndex) != prevLogTerm){
-          stay replying false
+          stay replying TermExpired(currentTerm)
+        } else if (persistence.getTermAtIndex(prevLogIndex).contains(prevLogTerm)) {
+          stay replying InconsistentLog
         } else {
           persistence.appendLog(prevLogIndex, currentTerm, entries)
-
         }
 
         stay using State()
@@ -95,13 +109,17 @@ package object raft {
     onTransition {
 
       case Follower -> Candidate =>
-        for {
-          path <- clusterConfiguration
-          if (path != self.path)
-        } {
-          context.actorSelection(path) ! RequestVote()
+        stateData match {
+          case CandidateState(commitIndex, lastApplied, leaderId, numberOfVotes) =>
+            val currentTerm = persistence.incrementAndGetTerm
+            for {
+              path <- clusterConfiguration
+              if (path != self.path)
+            } {
+              context.actorSelection(path) ! RequestVote(currentTerm, )
+            }
+            self ! Vote
         }
-        self ! Vote
 
       case Candidate -> Leader => {
 
@@ -127,13 +145,16 @@ package object raft {
   trait Persistence[T, D] {
     def appendLog(log: T): Unit
     def appendLog(index: Int, term: Int, entries: Seq[T]): Unit
+    def nextLogIndex: Int
 
     def snapshot: D
 
-    def getTermAt(index: Int): Option[Int]
+    def getTermAtIndex(index: Int): Option[Int]
 
     def setCurrentTerm(term: Int)
     def getCurrentTerm: Int
+    // TODO: this should be atomic or something?
+    def incrementAndGetTerm: Int
 
     def setVotedFor(serverId: Int)
     def getVotedFor: Option[Int]
@@ -157,6 +178,7 @@ package object raft {
 
 
     override def setCurrentTerm(term: Int) = {
+      votedFor = None
       currentTerm = term
     }
 
@@ -168,10 +190,16 @@ package object raft {
 
     override def setVotedFor(serverId: Int): Unit = { votedFor = Some(serverId) }
 
-    override def getTermAt(index: Int): Option[Int] = {
+    override def getTermAtIndex(index: Int): Option[Int] = {
       logs.lift(index).map(_._1)
     }
 
+    override def incrementAndGetTerm: Int = this.synchronized {
+      currentTerm += 1
+      currentTerm
+    }
+
+    override def nextLogIndex: Int = logs.size
   }
 
 }

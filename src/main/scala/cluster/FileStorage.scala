@@ -3,6 +3,7 @@ package cluster
 import java.io.File
 
 import akka.actor.{Props, ActorSystem}
+import akka.cluster.Cluster
 import com.typesafe.config.{ConfigFactory, Config}
 import utils._
 
