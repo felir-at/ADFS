@@ -20,23 +20,23 @@ package object raft {
 
 
   sealed trait Data
-  case class State(commitIndex: Int = 0, lastApplied: Int = 0, leaderId: Option[ActorPath] = None) extends Data
+  case class State(commitIndex: Int = 0, lastApplied: Int = 0, leaderId: Option[Int] = None) extends Data
   case class CandidateState(commitIndex: Int, lastApplied: Int, leaderId: Option[Int], numberOfVotes: Int) extends Data
   case class LeaderState(nextIndex: Map[Int, Int], matchIndex: Map[Int, Int]) extends Data
 
 
 
   sealed trait RPC
-  case class AppendEntries[T](term: Int, leaderPath: ActorPath, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) extends RPC
+  case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) extends RPC
   case class TermExpired(newTerm: Int) extends RPC
   case object InconsistentLog extends RPC
 //  case class AppendEntriesResult(term: Int, succ: Boolean) extends RPC
 
-  case class RequestVote(term: Int, lastLogIndex: Int, lastLogTerm: Int) extends RPC
-  case object Vote extends RPC
+  case class RequestVote(term: Int, candidateId: Int, lastLogIndex: Option[Int], lastLogTerm: Option[Int]) extends RPC
+  case object GrantVote extends RPC
 
   case class ClientCommand[T](t: T) extends RPC
-  case class ReferToLeader(leaderPath: ActorPath) extends RPC
+  case class ReferToLeader(leaderId: Int) extends RPC
   case object WrongLeader extends RPC
   case class ClientCommandResults(status: Try[Any]) extends RPC
 
@@ -60,29 +60,53 @@ package object raft {
    * @param clusterConfiguration contains the complete list of the cluster members (including self)
    * @param minQuorumSize
    */
-  class RaftActor[T, D](clusterConfiguration: Set[ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]) extends Actor with FSM[Role, Data] {
+  class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]) extends Actor with FSM[Role, Data] {
+
     startWith(Follower, State())
+    def currentTerm = persistence.getCurrentTerm
 
     when(Follower, stateTimeout = 100 milliseconds) {
       case Event(a: AppendEntries[T], State(commitIndex, lastApplied, _)) => {
-        val AppendEntries(term: Int, leaderId: ActorPath, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) = a
-        val currentTerm = persistence.getCurrentTerm
+        val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) = a
 
+
+        // FIXME: we should increment term
         if (term < currentTerm) {
           stay replying TermExpired(currentTerm)
-        } else if (persistence.getTermAtIndex(prevLogIndex).contains(prevLogTerm)) {
-          stay replying InconsistentLog
         } else {
-          persistence.appendLog(prevLogIndex, currentTerm, entries)
+          if (term > currentTerm) {
+            persistence.setCurrentTerm(term)
+            persistence.clearVotedFor()
+          }
+          if (persistence.getTermAtIndex(prevLogIndex).contains(prevLogTerm)) {
+            stay replying InconsistentLog
+          } else {
+            persistence.appendLog(prevLogIndex, currentTerm, entries)
+          }
         }
 
         stay using State()
       }
-      case Event(StateTimeout, s: State) => {
+
+      case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(commitIndex, lastApplied, _)) => {
+        if (term < currentTerm) {
+          stay replying TermExpired(currentTerm)
+        } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm)
+          persistence.getVotedFor match {
+            case None =>
+              persistence.setVotedFor(candidateId)
+              stay replying GrantVote
+            case Some(id) if (id == candidateId) =>
+              stay replying GrantVote
+            case _=>
+              stay
+          } else stay
+      }
+      case Event(StateTimeout, s) => {
         goto(Candidate) using s
       }
 
-      case Event(t: T, State(commitIndex, lastApplied, leaderIdOpt))=> {
+      case Event(t: ClientCommand[T], State(commitIndex, lastApplied, leaderIdOpt))=> {
         leaderIdOpt match {
           case None => stay replying WrongLeader
           case Some(leaderPath) => stay replying ReferToLeader(leaderPath)
@@ -96,10 +120,10 @@ package object raft {
     }
 
     when(Candidate, stateTimeout = 50 milliseconds) {
-      case Event(Vote, s: CandidateState) => {
+      case Event(GrantVote, s: CandidateState) => {
         val numberOfVotes = s.numberOfVotes + 1
         if ((clusterConfiguration.size / 2 + 1) <= numberOfVotes) {
-          goto(Leader) using LeaderState()
+          goto(Leader) using LeaderState(Map(), Map())
         } else {
           stay using s.copy(numberOfVotes = numberOfVotes)
         }
@@ -111,14 +135,19 @@ package object raft {
       case Follower -> Candidate =>
         stateData match {
           case CandidateState(commitIndex, lastApplied, leaderId, numberOfVotes) =>
+
             val currentTerm = persistence.incrementAndGetTerm
+
             for {
-              path <- clusterConfiguration
-              if (path != self.path)
+              (id, path) <- clusterConfiguration
+              if (id != this.id)
             } {
-              context.actorSelection(path) ! RequestVote(currentTerm, )
+              context.actorSelection(path) ! RequestVote(currentTerm, id, persistence.lastLogIndex, persistence.lastLogTerm)
             }
-            self ! Vote
+            self ! GrantVote
+
+          case s @ LeaderState(_, _) => log.error("invalid data in Candidate state: " + s )
+          case s @ State(_, _, _) => log.error("invalid data in Candidate state: " + s )
         }
 
       case Candidate -> Leader => {
