@@ -1,5 +1,7 @@
 package cluster
 
+import scala.language.postfixOps
+
 import akka.actor.Actor.Receive
 import akka.actor.{ActorRef, ActorPath, Actor, ActorLogging}
 import akka.cluster.routing.{ClusterRouterGroupSettings, ClusterRouterGroup}
