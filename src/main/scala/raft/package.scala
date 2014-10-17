@@ -145,7 +145,16 @@ package object raft {
   trait Persistence[T, D] {
     def appendLog(log: T): Unit
     def appendLog(index: Int, term: Int, entries: Seq[T]): Unit
-    def nextLogIndex: Int
+
+    /**  Returns None if log is empty, otherwise returns Some(l), if log is of length l
+      *
+     */
+    def lastLogIndex: Option[Int]
+
+    /** Returns None if log is empty, otherwise returns Some(t), if the term of the last log entry is t
+      *
+     */
+    def lastLogTerm: Option[Int]
 
     def snapshot: D
 
@@ -158,6 +167,7 @@ package object raft {
 
     def setVotedFor(serverId: Int)
     def getVotedFor: Option[Int]
+    def clearVotedFor(): Unit
 
   }
 
@@ -167,7 +177,7 @@ package object raft {
     var votedFor: Option[Int] = None
 
     override def appendLog(log: (String, Int)): Unit = {
-      logs = logs :+ Pair(getCurrentTerm, log)
+      logs = logs :+ (getCurrentTerm, log)
       ()
     }
     override def appendLog(index: Int, term: Int, entries: Seq[(String, Int)]): Unit = {
@@ -199,7 +209,27 @@ package object raft {
       currentTerm
     }
 
-    override def nextLogIndex: Int = logs.size
+    /** Returns None if log is empty, otherwise returns Some(l-1), if log is of length l
+      *
+      */
+    override def lastLogIndex: Option[Int] = logs.size match {
+      case 0 => None
+      case s => Some(s-1)
+    }
+
+    /** Returns None if log is empty, otherwise returns Some(t), if the term of the last log entry is t
+      *
+      */
+    override def lastLogTerm: Option[Int] = for {
+      i <- lastLogIndex
+    } yield {
+      logs(i)._1
+    }
+
+    override def clearVotedFor(): Unit = {
+      votedFor = None
+      ()
+    }
   }
 
 }
