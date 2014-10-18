@@ -1,9 +1,10 @@
 import akka.actor.{Props, ActorPath, FSM, Actor}
+import akka.util.Timeout
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
 import scala.language.higherKinds
-import scala.util.Try
+import scala.util.{Random, Try}
 
 /**
  * Created by kosii on 2014.10.04..
@@ -67,16 +68,14 @@ package object raft {
    * @param minQuorumSize
    */
   class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
+    startWith(stateName = Follower, stateData = State(), timeout = Some(utils.NormalDistribution.nextGaussian(500, 40) milliseconds))
 
-    startWith(Follower, State())
     def currentTerm = persistence.getCurrentTerm
 
-    when(Follower, stateTimeout = 100 milliseconds) {
+    when(Follower) {
       case Event(a: AppendEntries[T], State(commitIndex, lastApplied, _)) => {
         val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) = a
 
-
-        // FIXME: we should increment term
         if (term < currentTerm) {
           stay replying TermExpired(currentTerm)
         } else {
@@ -101,8 +100,10 @@ package object raft {
           persistence.getVotedFor match {
             case None =>
               persistence.setVotedFor(candidateId)
+              log.info(s"voting for ${candidateId}")
               stay replying GrantVote
             case Some(id) if (id == candidateId) =>
+              log.info(s"voting for ${candidateId}")
               stay replying GrantVote
             case _=>
               stay
@@ -110,7 +111,9 @@ package object raft {
       }
 
       case Event(StateTimeout, State(commitIndex, lastApplied, leaderId)) => {
-        goto(Candidate) using CandidateState(commitIndex, lastApplied, leaderId, 0)
+        goto(Candidate)
+          .using(CandidateState(commitIndex, lastApplied, leaderId, 0))
+          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
       }
 
       case Event(t: ClientCommand[T], State(commitIndex, lastApplied, leaderIdOpt))=> {
@@ -138,8 +141,8 @@ package object raft {
         }
       }
 
-      case Event(StateTimeout, CandidateState(commitIndex, lastApplied, leaderId, _)) => {
-        log.info("vote failed, not enough votes")
+      case Event(StateTimeout, CandidateState(commitIndex, lastApplied, leaderId, votes)) => {
+        log.info(s"vote failed, only ${votes} votes")
         log.info("Candidate -> Candidate")
 
         val currentTerm = persistence.incrementAndGetTerm
@@ -157,6 +160,22 @@ package object raft {
 
 
       }
+//
+//      case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(commitIndex, lastApplied, _)) => {
+//        if (term < currentTerm) {
+//          stay replying TermExpired(currentTerm)
+//        } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm)
+//          persistence.getVotedFor match {
+//            case None =>
+//              persistence.setVotedFor(candidateId)
+//              stay replying GrantVote
+//            case Some(id) if (id == candidateId) =>
+//              stay replying GrantVote
+//            case _=>
+//              stay
+//          } else stay
+//      }
+
 
 
 
@@ -176,6 +195,7 @@ package object raft {
               log.info(s"requesting vote from ${id}")
               context.actorSelection(path) ! RequestVote(currentTerm, id, persistence.lastLogIndex, persistence.lastLogTerm)
             }
+            log.info("voting for self")
             self ! GrantVote
 
           case s @ LeaderState(_, _) =>

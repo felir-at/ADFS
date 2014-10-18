@@ -27,4 +27,17 @@ object RaftMain extends App {
     ),
     "1")
 
+  val raft2 = system.actorOf(
+    RaftActor.props(
+      2, clusterConfiguration, 3, persistence2
+    ),
+    "2")
+
+  val raft3 = system.actorOf(
+    RaftActor.props(
+      3, clusterConfiguration, 3, persistence3
+    ),
+    "3")
+
+
 }

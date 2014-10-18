@@ -16,14 +16,9 @@ package object utils {
     ConfigFactory.parseString(configStr).withFallback(commonConfig)
   }
 
-  case class NormalDistribution(mean: Double, deviation: Double) {
-    def nextGaussian(): Double = {
-      mean.abs * NormalDistribution.random.nextGaussian() + deviation
-    }
-  }
-
   case object NormalDistribution {
     val random = new Random()
+    def nextGaussian(mean: Double, deviation: Double) = mean.abs * NormalDistribution.random.nextGaussian() + deviation
   }
 
 }
