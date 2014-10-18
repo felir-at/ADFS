@@ -1,5 +1,7 @@
 import com.typesafe.config.{ConfigFactory, Config}
 
+import scala.util.Random
+
 /**
  * Created by kosii on 2014.09.20..
  */
@@ -14,5 +16,14 @@ package object utils {
     ConfigFactory.parseString(configStr).withFallback(commonConfig)
   }
 
+  case class NormalDistribution(mean: Double, deviation: Double) {
+    def nextGaussian(): Double = {
+      mean.abs * NormalDistribution.random.nextGaussian() + deviation
+    }
+  }
+
+  case object NormalDistribution {
+    val random = new Random()
+  }
 
 }
