@@ -23,6 +23,16 @@
 #####Eventual consistency
 ######CRDT
 ##Results in distributed systems
-###CAP
-###
+###CAP theorem
+###FLP impossibility theorem
 #Distributed filesystems
+
+
+#Unsorted links
+
+* [The Road to Akka Cluster and Beyond](http://www.slideshare.net/jboner/the-road-to-akka-cluster-and-beyond)
+* [Akka Cluster implementation notes](https://gist.github.com/jboner/7692270)
+* [Akka contribs](http://doc.akka.io/docs/akka/snapshot/contrib/)
+* [Safety and Liveness: Eventual consistency is not safe](http://www.bailis.org/blog/safety-and-liveness-eventual-consistency-is-not-safe/)
+* [Eventual Consistency Today: Limitations, Extensions, and Beyond](https://www.cs.berkeley.edu/~alig/papers/eventual-consistency-limitations-extensions.pdf)
+* [Distributed Systems: Are the FLP impossibility result and Brewer's CAP theorem basically equivalent?](http://www.quora.com/Distributed-Systems/Are-the-FLP-impossibility-result-and-Brewers-CAP-theorem-basically-equivalent)
