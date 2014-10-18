@@ -1,4 +1,4 @@
-import akka.actor.{ActorPath, FSM, Actor}
+import akka.actor.{Props, ActorPath, FSM, Actor}
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
@@ -55,12 +55,18 @@ package object raft {
     def lastApplied = Int
   }
 
+
+  object RaftActor {
+    def props[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]): Props = {
+      Props(classOf[RaftActor[T, D]], id, clusterConfiguration, minQuorumSize, persistence)
+    }
+  }
   /**
    *
    * @param clusterConfiguration contains the complete list of the cluster members (including self)
    * @param minQuorumSize
    */
-  class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]) extends Actor with FSM[Role, Data] {
+  class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
 
     startWith(Follower, State())
     def currentTerm = persistence.getCurrentTerm
@@ -102,8 +108,9 @@ package object raft {
               stay
           } else stay
       }
-      case Event(StateTimeout, s) => {
-        goto(Candidate) using s
+
+      case Event(StateTimeout, State(commitIndex, lastApplied, leaderId)) => {
+        goto(Candidate) using CandidateState(commitIndex, lastApplied, leaderId, 0)
       }
 
       case Event(t: ClientCommand[T], State(commitIndex, lastApplied, leaderIdOpt))=> {
@@ -115,11 +122,13 @@ package object raft {
 
     }
 
-    when(Leader, stateTimeout = 50 milliseconds) {
-      case Event(_, _) => ???
+    when(Leader, stateTimeout = 500 milliseconds) {
+      case Event(StateTimeout, l @ LeaderState(nextIndex, matchIndex)) =>
+        log.info("It's time to send a heartbeat!!!")
+        stay using l
     }
 
-    when(Candidate, stateTimeout = 50 milliseconds) {
+    when(Candidate, stateTimeout = 500 milliseconds) {
       case Event(GrantVote, s: CandidateState) => {
         val numberOfVotes = s.numberOfVotes + 1
         if ((clusterConfiguration.size / 2 + 1) <= numberOfVotes) {
@@ -128,44 +137,96 @@ package object raft {
           stay using s.copy(numberOfVotes = numberOfVotes)
         }
       }
+
+      case Event(StateTimeout, CandidateState(commitIndex, lastApplied, leaderId, _)) => {
+        log.info("vote failed, not enough votes")
+        log.info("Candidate -> Candidate")
+
+        val currentTerm = persistence.incrementAndGetTerm
+        for {
+          (id, path) <- clusterConfiguration
+          if (id != this.id)
+        } {
+          log.info(s"requesting vote from ${id}")
+          context.actorSelection(path) ! RequestVote(currentTerm, id, persistence.lastLogIndex, persistence.lastLogTerm)
+        }
+        self ! GrantVote
+
+
+        goto(Candidate) using CandidateState(commitIndex, lastApplied, leaderId, 0)
+
+
+      }
+
+
+
     }
 
     onTransition {
 
       case Follower -> Candidate =>
-        stateData match {
+        log.info("transition: Follower -> Candidate")
+        nextStateData match {
           case CandidateState(commitIndex, lastApplied, leaderId, numberOfVotes) =>
-
             val currentTerm = persistence.incrementAndGetTerm
-
             for {
               (id, path) <- clusterConfiguration
               if (id != this.id)
             } {
+              log.info(s"requesting vote from ${id}")
               context.actorSelection(path) ! RequestVote(currentTerm, id, persistence.lastLogIndex, persistence.lastLogTerm)
             }
             self ! GrantVote
 
-          case s @ LeaderState(_, _) => log.error("invalid data in Candidate state: " + s )
-          case s @ State(_, _, _) => log.error("invalid data in Candidate state: " + s )
+          case s @ LeaderState(_, _) =>
+            log.error("invalid data in Candidate state: " + s )
+
+          case s @ State(_, _, _) =>
+            log.error("invalid data in Candidate state: " + s )
         }
 
       case Candidate -> Leader => {
+        log.info("transition: Candidate -> Leader")
 
       }
 
       case Candidate -> Follower => {
+        log.info("transition: Candidate -> Follower")
 
       }
 
       case Leader -> Follower => {
+        log.info("transition: Leader -> Follower")
 
       }
 
       case Candidate -> Candidate => {
+        // NOTE: same state transition emits notification only starting from akka 2.4
+        log.info("transition: Candidate -> Candidate")
+
+
+        nextStateData match {
+          case CandidateState(commitIndex, lastApplied, leaderId, numberOfVotes) =>
+            val currentTerm = persistence.incrementAndGetTerm
+            for {
+              (id, path) <- clusterConfiguration
+              if (id != this.id)
+            } {
+              log.info(s"requesting vote from ${id}")
+              context.actorSelection(path) ! RequestVote(currentTerm, id, persistence.lastLogIndex, persistence.lastLogTerm)
+            }
+            self ! GrantVote
+
+          case s @ LeaderState(_, _) =>
+            log.error("invalid data in Candidate state: " + s )
+
+          case s @ State(_, _, _) =>
+            log.error("invalid data in Candidate state: " + s )
+        }
 
       }
     }
+    initialize()
   }
 
 
