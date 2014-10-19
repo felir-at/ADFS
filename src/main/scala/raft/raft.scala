@@ -6,6 +6,7 @@ import scala.language.postfixOps
 import scala.language.higherKinds
 import scala.util.{Random, Try}
 
+
 /**
  * Created by kosii on 2014.10.04..
  */
@@ -21,15 +22,16 @@ package object raft {
 
 
   sealed trait Data
-  case class State(commitIndex: Int = 0, lastApplied: Int = 0, leaderId: Option[Int] = None) extends Data
-  case class CandidateState(commitIndex: Int, lastApplied: Int, leaderId: Option[Int], numberOfVotes: Int) extends Data
-  case class LeaderState(commitIndex: Int, lastApplied: Int, nextIndex: Map[Int, Int], matchIndex: Map[Int, Int]) extends Data
+  case class State(commitIndex: Option[Int] = None, lastApplied: Option[Int] = None, leaderId: Option[Int] = None) extends Data
+  case class CandidateState(commitIndex: Option[Int], lastApplied: Option[Int], leaderId: Option[Int], numberOfVotes: Int) extends Data
+  case class LeaderState(commitIndex: Option[Int], lastApplied: Option[Int], nextIndex: Map[Int, Int], matchIndex: Map[Int, Int]) extends Data
 
 
   sealed trait RPC
-  case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) extends RPC
+  case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) extends RPC
   case class TermExpired(newTerm: Int) extends RPC
   case object InconsistentLog extends RPC
+  case class LogMatchesUntil(id: Int, matchIndex: Option[Int]) extends RPC
 
   case class RequestVote(term: Int, candidateId: Int, lastLogIndex: Option[Int], lastLogTerm: Option[Int]) extends RPC
   case class GrantVote(term: Int) extends RPC
@@ -68,13 +70,16 @@ package object raft {
    */
   class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], replicationFactor: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
 
-    startWith(stateName = Follower, stateData = State(), timeout = Some(utils.NormalDistribution.nextGaussian(500, 40) milliseconds))
-
+    def electionTimeout = utils.NormalDistribution.nextGaussian(500, 40) milliseconds
     def currentTerm = persistence.getCurrentTerm
 
-    when(Follower) {
+
+    //TODO: we should remove timout,and keep it only for the when(Follower) {...} block
+    startWith(stateName = Follower, stateData = State())
+
+    when(Follower, stateTimeout = 2 * electionTimeout) {
       case Event(a: AppendEntries[T], State(commitIndex, lastApplied, _)) => {
-        val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) = a
+        val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) = a
 
         if (term < currentTerm) {
           stay replying TermExpired(currentTerm)
@@ -83,20 +88,21 @@ package object raft {
             persistence.setCurrentTerm(term)
             persistence.clearVotedFor()
           }
-          if (persistence.getTermAtIndex(prevLogIndex).contains(prevLogTerm)) {
-            stay replying InconsistentLog
+          if (persistence.termMatches(prevLogIndex, prevLogTerm)) {
+            persistence.appendLog(prevLogIndex, persistence.getCurrentTerm, entries)
+            stay using State(commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
           } else {
-            persistence.appendLog(prevLogIndex, currentTerm, entries)
+            stay replying InconsistentLog
           }
+
         }
 
-        stay using State()
       }
 
       case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(commitIndex, lastApplied, _)) => {
         if (term < currentTerm) {
           stay replying TermExpired(currentTerm)
-        } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm)
+        } else if (persistence.termMatches(lastLogIndex, lastLogIndex)) {
           persistence.getVotedFor match {
             case None =>
               persistence.setVotedFor(candidateId)
@@ -107,10 +113,12 @@ package object raft {
               stay replying GrantVote(term)
             case _ =>
               stay
-          } else stay
+          }
+        } else stay
       }
 
       case Event(StateTimeout, State(commitIndex, lastApplied, leaderId)) => {
+        println("No heartbeat received since")
         goto(Candidate)
           .using(CandidateState(commitIndex, lastApplied, leaderId, 0))
 //          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
@@ -125,9 +133,15 @@ package object raft {
 
     }
 
-    when(Leader, stateTimeout = 400 milliseconds) {
+    when(Leader, stateTimeout = electionTimeout) {
       case Event(StateTimeout, l@LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) =>
         log.info("It's time to send a heartbeat!!!")
+        for {
+          (id, path) <- clusterConfiguration
+          if (id != this.id)
+        } {
+          context.actorSelection(path) ! AppendEntries(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm, Seq(), commitIndex)
+        }
         stay using l
       case Event(GrantVote(term), _) => {
         if (term > persistence.getCurrentTerm) {
@@ -138,6 +152,11 @@ package object raft {
           log.info(s"Yo, I'm already the boss, but thanks ${sender}")
           stay
         }
+      }
+
+      //TODO: we should update matchIndex
+      case Event(LogMatchesUntil(id, mmatchIndex), LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) => {
+        stay
       }
 
     }
@@ -268,9 +287,8 @@ package object raft {
 
 
   trait Persistence[T, D] {
-    def appendLog(log: T): Unit
 
-    def appendLog(index: Int, term: Int, entries: Seq[T]): Unit
+    def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[T]): Unit
 
     /** Returns None if log is empty, otherwise returns Some(l), if log is of length l
       *
@@ -282,9 +300,11 @@ package object raft {
       */
     def lastLogTerm: Option[Int]
 
+    def termMatches(prevLogIndex: Option[Int], prevLogTerm: Option[Int]): Boolean
+
     def snapshot: D
 
-    def getTermAtIndex(index: Int): Option[Int]
+    def getTerm(index: Int): Option[Int]
 
     def setCurrentTerm(term: Int)
 
@@ -306,14 +326,9 @@ package object raft {
     var currentTerm: Int = 0
     var votedFor: Option[Int] = None
 
-    override def appendLog(log: (String, Int)): Unit = {
-      logs = logs :+(getCurrentTerm, log)
-      ()
-    }
-
-    override def appendLog(index: Int, term: Int, entries: Seq[(String, Int)]): Unit = {
-      logs = logs.take(index) ++ entries.map((term, _))
-      ()
+    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(String, Int)]): Unit = prevLogIndex match {
+      case None => logs = entries.map((term, _)).toVector
+      case Some(index) => logs = logs.take(index + 1) ++ entries.map((term, _))
     }
 
 
@@ -332,7 +347,7 @@ package object raft {
       votedFor = Some(serverId)
     }
 
-    override def getTermAtIndex(index: Int): Option[Int] = {
+    override def getTerm(index: Int): Option[Int] = {
       logs.lift(index).map(_._1)
     }
 
@@ -361,6 +376,11 @@ package object raft {
     override def clearVotedFor(): Unit = {
       votedFor = None
       ()
+    }
+
+    override def termMatches(prevLogIndex: Option[Int], prevLogTerm: Option[Int]): Boolean = prevLogIndex match {
+      case None => true
+      case Some(index) =>  prevLogTerm == getTerm(index)
     }
   }
 
