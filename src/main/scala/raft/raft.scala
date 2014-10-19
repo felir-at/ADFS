@@ -64,9 +64,9 @@ package object raft {
   /**
    *
    * @param clusterConfiguration contains the complete list of the cluster members (including self)
-   * @param minQuorumSize
+   * @param replicationFactor
    */
-  class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
+  class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], replicationFactor: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
 
     startWith(stateName = Follower, stateData = State(), timeout = Some(utils.NormalDistribution.nextGaussian(500, 40) milliseconds))
 
@@ -146,7 +146,7 @@ package object raft {
       case Event(GrantVote(term), s: CandidateState) => {
         // TODO: maybe we should check the term?
         val numberOfVotes = s.numberOfVotes + 1
-        if ((clusterConfiguration.size / 2 + 1) <= numberOfVotes) {
+        if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(clusterConfiguration.size / 2) + 1)) <= numberOfVotes) {
           goto(Leader) using LeaderState(s.commitIndex, s.lastApplied, Map(), Map())
         } else {
           stay using s.copy(numberOfVotes = numberOfVotes)
