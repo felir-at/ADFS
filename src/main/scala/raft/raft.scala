@@ -24,13 +24,13 @@ package object raft {
   sealed trait Data
   case class State(commitIndex: Option[Int] = None, lastApplied: Option[Int] = None, leaderId: Option[Int] = None) extends Data
   case class CandidateState(commitIndex: Option[Int], lastApplied: Option[Int], leaderId: Option[Int], numberOfVotes: Int) extends Data
-  case class LeaderState(commitIndex: Option[Int], lastApplied: Option[Int], nextIndex: Map[Int, Int], matchIndex: Map[Int, Int]) extends Data
+  case class LeaderState(commitIndex: Option[Int], lastApplied: Option[Int], nextIndex: Map[Int, Option[Int]], matchIndex: Map[Int, Option[Int]]) extends Data
 
 
   sealed trait RPC
   case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) extends RPC
   case class TermExpired(newTerm: Int) extends RPC
-  case object InconsistentLog extends RPC
+  case class InconsistentLog(id: Int) extends RPC
   case class LogMatchesUntil(id: Int, matchIndex: Option[Int]) extends RPC
 
   case class RequestVote(term: Int, candidateId: Int, lastLogIndex: Option[Int], lastLogTerm: Option[Int]) extends RPC
@@ -74,7 +74,6 @@ package object raft {
     def currentTerm = persistence.getCurrentTerm
 
 
-    //TODO: we should remove timout,and keep it only for the when(Follower) {...} block
     startWith(stateName = Follower, stateData = State())
 
     when(Follower, stateTimeout = 2 * electionTimeout) {
@@ -154,9 +153,14 @@ package object raft {
         }
       }
 
-      //TODO: we should update matchIndex
       case Event(LogMatchesUntil(id, mmatchIndex), LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) => {
-        stay
+        //TODO: verify if it's correct
+        stay using LeaderState(commitIndex, lastApplied, nextIndex, matchIndex + (id -> mmatchIndex))
+      }
+
+      case Event(InconsistentLog(id), LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) => {
+        // TODO: we have to decrement the corresponding nextIndex
+        stay using LeaderState(commitIndex, lastApplied, nextIndex + (id -> nextIndex.getOrElse(id, None)), matchIndex)
       }
 
     }
@@ -166,6 +170,7 @@ package object raft {
         // TODO: maybe we should check the term?
         val numberOfVotes = s.numberOfVotes + 1
         if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(clusterConfiguration.size / 2) + 1)) <= numberOfVotes) {
+          // TODO: we have to correctly fill out nextIndex and matchIndex
           goto(Leader) using LeaderState(s.commitIndex, s.lastApplied, Map(), Map())
         } else {
           stay using s.copy(numberOfVotes = numberOfVotes)

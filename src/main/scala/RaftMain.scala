@@ -1,4 +1,4 @@
-import akka.actor.{Props, ActorSystem, ActorPath}
+import akka.actor.{PoisonPill, Props, ActorSystem, ActorPath}
 import akka.cluster.Cluster
 import com.typesafe.config.ConfigFactory
 import raft.{InMemoryPersistence, RaftActor}
@@ -43,6 +43,13 @@ object RaftMain extends App {
         3, clusterConfiguration, 3, persistence3
       ),
       "3")
+//    println("sleeping")
+//    Thread.sleep(3000)
+//    println("end sleeping")
+//
+//    println("killing raft1")
+//    raft1 ! PoisonPill
+
   }
 
 
