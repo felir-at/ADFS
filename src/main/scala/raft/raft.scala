@@ -23,7 +23,7 @@ package object raft {
   sealed trait Data
   case class State(commitIndex: Int = 0, lastApplied: Int = 0, leaderId: Option[Int] = None) extends Data
   case class CandidateState(commitIndex: Int, lastApplied: Int, leaderId: Option[Int], numberOfVotes: Int) extends Data
-  case class LeaderState(nextIndex: Map[Int, Int], matchIndex: Map[Int, Int]) extends Data
+  case class LeaderState(commitIndex: Int, lastApplied: Int, nextIndex: Map[Int, Int], matchIndex: Map[Int, Int]) extends Data
 
 
   sealed trait RPC
@@ -32,7 +32,7 @@ package object raft {
   case object InconsistentLog extends RPC
 
   case class RequestVote(term: Int, candidateId: Int, lastLogIndex: Option[Int], lastLogTerm: Option[Int]) extends RPC
-  case object GrantVote extends RPC
+  case class GrantVote(term: Int) extends RPC
 
   case class ClientCommand[T](t: T) extends RPC
   case class ReferToLeader(leaderId: Int) extends RPC
@@ -99,11 +99,11 @@ package object raft {
           persistence.getVotedFor match {
             case None =>
               persistence.setVotedFor(candidateId)
-              log.info(s"voting for ${candidateId}")
-              stay replying GrantVote
+              log.info(s"not yet voted, so voting for ${candidateId}")
+              stay replying GrantVote(term)
             case Some(id) if (id == candidateId) =>
-              log.info(s"voting for ${candidateId}")
-              stay replying GrantVote
+              log.info(s"already voted for ${candidateId}, but voting again for ${candidateId}")
+              stay replying GrantVote(term)
             case _ =>
               stay
           } else stay
@@ -125,16 +125,28 @@ package object raft {
     }
 
     when(Leader, stateTimeout = 500 milliseconds) {
-      case Event(StateTimeout, l@LeaderState(nextIndex, matchIndex)) =>
+      case Event(StateTimeout, l@LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) =>
         log.info("It's time to send a heartbeat!!!")
         stay using l
+      case Event(GrantVote(term), _) => {
+        if (term > persistence.getCurrentTerm) {
+          log.info("Received GrantVote for a term in the future, becoming Follower")
+          goto(Follower) using State()
+        } else {
+
+          log.info(s"Yo, I'm already the boss, but thanks ${sender}")
+          stay
+        }
+      }
+
     }
 
     when(Candidate, stateTimeout = 500 milliseconds) {
-      case Event(GrantVote, s: CandidateState) => {
+      case Event(GrantVote(term), s: CandidateState) => {
+        // TODO: maybe we should check the term?
         val numberOfVotes = s.numberOfVotes + 1
         if ((clusterConfiguration.size / 2 + 1) <= numberOfVotes) {
-          goto(Leader) using LeaderState(Map(), Map())
+          goto(Leader) using LeaderState(s.commitIndex, s.lastApplied, Map(), Map())
         } else {
           stay using s.copy(numberOfVotes = numberOfVotes)
         }
@@ -150,9 +162,9 @@ package object raft {
           if (id != this.id)
         } {
           log.info(s"requesting vote from ${id}")
-          context.actorSelection(path) ! RequestVote(currentTerm, id, persistence.lastLogIndex, persistence.lastLogTerm)
+          context.actorSelection(path) ! RequestVote(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm)
         }
-        self ! GrantVote
+        self ! GrantVote(currentTerm)
 
 
         goto(Candidate) using CandidateState(commitIndex, lastApplied, leaderId, 0)
@@ -171,9 +183,9 @@ package object raft {
           persistence.getVotedFor match {
             case None =>
               persistence.setVotedFor(candidateId)
-              stay replying GrantVote
+              stay replying GrantVote(term)
             case Some(id) if (id == candidateId) =>
-              stay replying GrantVote
+              stay replying GrantVote(term)
             case _ =>
               stay
           }
@@ -196,12 +208,12 @@ package object raft {
               if (id != this.id)
             } {
               log.info(s"requesting vote from ${id}")
-              context.actorSelection(path) ! RequestVote(currentTerm, id, persistence.lastLogIndex, persistence.lastLogTerm)
+              context.actorSelection(path) ! RequestVote(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm)
             }
             log.info("voting for self")
-            self ! GrantVote
+            self ! GrantVote(currentTerm)
 
-          case s@LeaderState(_, _) =>
+          case s@LeaderState(_, _, _, _) =>
             log.error("invalid data in Candidate state: " + s)
 
           case s@State(_, _, _) =>
@@ -238,9 +250,9 @@ package object raft {
               log.info(s"requesting vote from ${id}")
               context.actorSelection(path) ! RequestVote(currentTerm, id, persistence.lastLogIndex, persistence.lastLogTerm)
             }
-            self ! GrantVote
+            self ! GrantVote(currentTerm)
 
-          case s@LeaderState(_, _) =>
+          case s@LeaderState(_, _, _, _) =>
             log.error("invalid data in Candidate state: " + s)
 
           case s@State(_, _, _) =>
