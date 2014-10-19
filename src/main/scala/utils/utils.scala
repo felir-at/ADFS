@@ -1,6 +1,6 @@
-import com.typesafe.config.{ConfigFactory, Config}
+import java.util.concurrent.ThreadLocalRandom
 
-import scala.util.Random
+import com.typesafe.config.{ConfigFactory, Config}
 
 /**
  * Created by kosii on 2014.09.20..
@@ -17,8 +17,7 @@ package object utils {
   }
 
   case object NormalDistribution {
-    val random = new Random()
-    def nextGaussian(mean: Double, deviation: Double) = mean.abs * NormalDistribution.random.nextGaussian() + deviation
+    def nextGaussian(mean: Double, deviation: Double) = deviation.abs * ThreadLocalRandom.current().nextGaussian() + mean
   }
 
 }
