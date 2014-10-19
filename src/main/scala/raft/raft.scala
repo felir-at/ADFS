@@ -67,6 +67,7 @@ package object raft {
    * @param minQuorumSize
    */
   class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
+
     startWith(stateName = Follower, stateData = State(), timeout = Some(utils.NormalDistribution.nextGaussian(500, 40) milliseconds))
 
     def currentTerm = persistence.getCurrentTerm
@@ -112,7 +113,7 @@ package object raft {
       case Event(StateTimeout, State(commitIndex, lastApplied, leaderId)) => {
         goto(Candidate)
           .using(CandidateState(commitIndex, lastApplied, leaderId, 0))
-          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
+//          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
       }
 
       case Event(t: ClientCommand[T], State(commitIndex, lastApplied, leaderIdOpt)) => {
@@ -124,7 +125,7 @@ package object raft {
 
     }
 
-    when(Leader, stateTimeout = 500 milliseconds) {
+    when(Leader, stateTimeout = 400 milliseconds) {
       case Event(StateTimeout, l@LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) =>
         log.info("It's time to send a heartbeat!!!")
         stay using l
@@ -141,7 +142,7 @@ package object raft {
 
     }
 
-    when(Candidate, stateTimeout = 500 milliseconds) {
+    when(Candidate, stateTimeout = utils.NormalDistribution.nextGaussian(500, 40) millis) {
       case Event(GrantVote(term), s: CandidateState) => {
         // TODO: maybe we should check the term?
         val numberOfVotes = s.numberOfVotes + 1
