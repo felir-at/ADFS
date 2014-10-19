@@ -26,12 +26,10 @@ package object raft {
   case class LeaderState(nextIndex: Map[Int, Int], matchIndex: Map[Int, Int]) extends Data
 
 
-
   sealed trait RPC
   case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Int, prevLogTerm: Int, entries: Seq[T], leaderCommit: Int) extends RPC
   case class TermExpired(newTerm: Int) extends RPC
   case object InconsistentLog extends RPC
-//  case class AppendEntriesResult(term: Int, succ: Boolean) extends RPC
 
   case class RequestVote(term: Int, candidateId: Int, lastLogIndex: Option[Int], lastLogTerm: Option[Int]) extends RPC
   case object GrantVote extends RPC
@@ -43,16 +41,16 @@ package object raft {
 
 
   /** The FSM whose state are replicated all over our cluster
-   *
-   * @tparam S
-   * @tparam D
-   */
+    *
+    * @tparam S
+    * @tparam D
+    */
   trait RaftFSM[S, D] extends FSM[S, D] {
     /** As D.Ongaro stated here https://groups.google.com/d/msg/raft-dev/KIozjYuq5m0/XsmYAzLpOikJ, lastApplied
       * should be as durable as the state machine
-     *
-     * @return
-     */
+      *
+      * @return
+      */
     def lastApplied = Int
   }
 
@@ -62,6 +60,7 @@ package object raft {
       Props(classOf[RaftActor[T, D]], id, clusterConfiguration, minQuorumSize, persistence)
     }
   }
+
   /**
    *
    * @param clusterConfiguration contains the complete list of the cluster members (including self)
@@ -105,7 +104,7 @@ package object raft {
             case Some(id) if (id == candidateId) =>
               log.info(s"voting for ${candidateId}")
               stay replying GrantVote
-            case _=>
+            case _ =>
               stay
           } else stay
       }
@@ -116,7 +115,7 @@ package object raft {
           .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
       }
 
-      case Event(t: ClientCommand[T], State(commitIndex, lastApplied, leaderIdOpt))=> {
+      case Event(t: ClientCommand[T], State(commitIndex, lastApplied, leaderIdOpt)) => {
         leaderIdOpt match {
           case None => stay replying WrongLeader
           case Some(leaderPath) => stay replying ReferToLeader(leaderPath)
@@ -126,7 +125,7 @@ package object raft {
     }
 
     when(Leader, stateTimeout = 500 milliseconds) {
-      case Event(StateTimeout, l @ LeaderState(nextIndex, matchIndex)) =>
+      case Event(StateTimeout, l@LeaderState(nextIndex, matchIndex)) =>
         log.info("It's time to send a heartbeat!!!")
         stay using l
     }
@@ -160,26 +159,30 @@ package object raft {
 
 
       }
-//
-//      case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(commitIndex, lastApplied, _)) => {
-//        if (term < currentTerm) {
-//          stay replying TermExpired(currentTerm)
-//        } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm)
-//          persistence.getVotedFor match {
-//            case None =>
-//              persistence.setVotedFor(candidateId)
-//              stay replying GrantVote
-//            case Some(id) if (id == candidateId) =>
-//              stay replying GrantVote
-//            case _=>
-//              stay
-//          } else stay
-//      }
 
-
-
-
+      case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(commitIndex, lastApplied, _)) => {
+        if (term < currentTerm) {
+          // NOTE: § 5.1
+          stay replying TermExpired(currentTerm)
+        } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm) {
+          if (term > currentTerm) {
+            persistence.clearVotedFor()
+          }
+          persistence.getVotedFor match {
+            case None =>
+              persistence.setVotedFor(candidateId)
+              stay replying GrantVote
+            case Some(id) if (id == candidateId) =>
+              stay replying GrantVote
+            case _ =>
+              stay
+          }
+        } else {
+          stay replying InconsistentLog
+        }
+      }
     }
+
 
     onTransition {
 
@@ -198,11 +201,11 @@ package object raft {
             log.info("voting for self")
             self ! GrantVote
 
-          case s @ LeaderState(_, _) =>
-            log.error("invalid data in Candidate state: " + s )
+          case s@LeaderState(_, _) =>
+            log.error("invalid data in Candidate state: " + s)
 
-          case s @ State(_, _, _) =>
-            log.error("invalid data in Candidate state: " + s )
+          case s@State(_, _, _) =>
+            log.error("invalid data in Candidate state: " + s)
         }
 
       case Candidate -> Leader => {
@@ -237,33 +240,33 @@ package object raft {
             }
             self ! GrantVote
 
-          case s @ LeaderState(_, _) =>
-            log.error("invalid data in Candidate state: " + s )
+          case s@LeaderState(_, _) =>
+            log.error("invalid data in Candidate state: " + s)
 
-          case s @ State(_, _, _) =>
-            log.error("invalid data in Candidate state: " + s )
+          case s@State(_, _, _) =>
+            log.error("invalid data in Candidate state: " + s)
+
         }
-
       }
     }
+
     initialize()
   }
 
 
-
-
   trait Persistence[T, D] {
     def appendLog(log: T): Unit
+
     def appendLog(index: Int, term: Int, entries: Seq[T]): Unit
 
-    /**  Returns None if log is empty, otherwise returns Some(l), if log is of length l
+    /** Returns None if log is empty, otherwise returns Some(l), if log is of length l
       *
-     */
+      */
     def lastLogIndex: Option[Int]
 
     /** Returns None if log is empty, otherwise returns Some(t), if the term of the last log entry is t
       *
-     */
+      */
     def lastLogTerm: Option[Int]
 
     def snapshot: D
@@ -271,12 +274,16 @@ package object raft {
     def getTermAtIndex(index: Int): Option[Int]
 
     def setCurrentTerm(term: Int)
+
     def getCurrentTerm: Int
+
     // TODO: this should be atomic or something?
     def incrementAndGetTerm: Int
 
     def setVotedFor(serverId: Int)
+
     def getVotedFor: Option[Int]
+
     def clearVotedFor(): Unit
 
   }
@@ -287,14 +294,14 @@ package object raft {
     var votedFor: Option[Int] = None
 
     override def appendLog(log: (String, Int)): Unit = {
-      logs = logs :+ (getCurrentTerm, log)
+      logs = logs :+(getCurrentTerm, log)
       ()
     }
+
     override def appendLog(index: Int, term: Int, entries: Seq[(String, Int)]): Unit = {
       logs = logs.take(index) ++ entries.map((term, _))
       ()
     }
-
 
 
     override def setCurrentTerm(term: Int) = {
@@ -308,7 +315,9 @@ package object raft {
 
     override def getVotedFor: Option[Int] = votedFor
 
-    override def setVotedFor(serverId: Int): Unit = { votedFor = Some(serverId) }
+    override def setVotedFor(serverId: Int): Unit = {
+      votedFor = Some(serverId)
+    }
 
     override def getTermAtIndex(index: Int): Option[Int] = {
       logs.lift(index).map(_._1)
@@ -324,7 +333,7 @@ package object raft {
       */
     override def lastLogIndex: Option[Int] = logs.size match {
       case 0 => None
-      case s => Some(s-1)
+      case s => Some(s - 1)
     }
 
     /** Returns None if log is empty, otherwise returns Some(t), if the term of the last log entry is t
@@ -343,3 +352,4 @@ package object raft {
   }
 
 }
+
