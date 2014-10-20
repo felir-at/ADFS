@@ -1,3 +1,5 @@
+package raft
+
 import akka.actor.{ActorPath, FSM, Actor}
 import scala.concurrent.duration._
 import scala.language.postfixOps
@@ -5,10 +7,11 @@ import scala.language.postfixOps
 import scala.language.higherKinds
 import scala.util.Try
 
+
 /**
  * Created by kosii on 2014.10.04..
  */
-package object raft {
+package object actor {
 
   type ServerId = Int
   type Term = Int
