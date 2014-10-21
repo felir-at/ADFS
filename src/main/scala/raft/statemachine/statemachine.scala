@@ -7,24 +7,60 @@ import akka.actor.FSM
  */
 package object statemachine {
 
-  trait StateMachine[S, D] extends FSM[S, D] {
 
-    override sealed def whenUnhandled {
-    }
+  // TODO: valahogy meg kell csinalni, hogy az automatikusan ide erkezo uzenetek be legyenek csomagolva egy ClientCommand wrappre classba
+  //    es az innen elkuldott cuccok pedig egy ClientResponse wrapper classba, anelkul, hogy a traitet implementalo user errol barmit tudna
+
+  trait StateMachine[S, D] {
+    self: FSM[S, D] =>
+
+    def lastApplied: Option[Int]
   }
 
 
-  case class S
-  case class Data(store: Map[Int, String])
+  sealed trait StateName
+  case object UniqueState extends StateName
 
-  trait Commands
+  sealed trait StateData
+  case class Data(lastApplied: Option[Int], store: Map[String, Int]) extends StateData
 
-  class KVStore extends StateMachine[S, Data] with FSM[S, Data] {
-    startWith(S, Data(Map()))
+  sealed trait Command
+  case class SetValue(index: Int, key:String, value: Int) extends Command
+  case class DeleteValue(index: Int, key: String) extends Command
+  case class GetValue(index: Int, key: String) extends Command
 
-    when (S) {
-      case ()
+
+  sealed trait Response
+  case object OK extends Response
+  case class OK(value: Option[Int]) extends Response
+
+
+  class KVStore extends StateMachine[StateName, StateData] with FSM[StateName, StateData] {
+    startWith(UniqueState, Data(None, Map()))
+
+    when (UniqueState) {
+      // TODO: itt igazabol az indexek ellenorzesenel azt kell ellenorizni, hogy az elkuldott parancs a soronkovetkezo indexet tartalmazza-e
+      case Event(SetValue(index, key, value), Data(lastApplied, store)) => lastApplied match {
+        case Some(lastIndex) if (lastIndex >= index) =>
+          stay replying OK
+        case _ =>
+          stay using (Data(Some(index), store + (key -> value))) replying OK
+      }
+      case Event(DeleteValue(index, key), Data(lastApplied, store)) => lastApplied match {
+        case Some(lastIndex) if (lastIndex >= index) =>
+          stay replying OK
+        case _ =>
+          stay using(Data(Some(index), store - key)) replying OK
+      }
+      case Event(GetValue(index, key), Data(lastApplied, store)) =>
+          stay using (Data(Some(index), store)) replying OK(store.lift(key))
     }
 
+    override def lastApplied: Option[Int] = {
+      stateData match {
+        case Data(lastApplied, _) => lastApplied
+        case _ => None
+      }
+    }
   }
 }
