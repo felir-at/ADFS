@@ -11,5 +11,9 @@ scalacOptions += "-feature"
 scalacOptions += "-deprecation"
 
 libraryDependencies ++=
-  Seq("com.typesafe.akka" %% "akka-actor" % "2.3.6",
-    "com.typesafe.akka" %% "akka-cluster" % "2.3.6")
+  Seq(
+    "com.typesafe.akka" %% "akka-actor" % "2.3.6",
+    "com.typesafe.akka" %% "akka-cluster" % "2.3.6",
+    "com.typesafe.akka" %% "akka-testkit" % "2.3.6",
+    "org.scalatest" % "scalatest_2.11" % "2.2.1" % "test"
+  )
