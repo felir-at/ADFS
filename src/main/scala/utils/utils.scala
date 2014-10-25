@@ -1,3 +1,5 @@
+import java.util.concurrent.ThreadLocalRandom
+
 import com.typesafe.config.{ConfigFactory, Config}
 
 /**
@@ -14,5 +16,8 @@ package object utils {
     ConfigFactory.parseString(configStr).withFallback(commonConfig)
   }
 
+  case object NormalDistribution {
+    def nextGaussian(mean: Double, deviation: Double) = deviation.abs * ThreadLocalRandom.current().nextGaussian() + mean
+  }
 
 }
