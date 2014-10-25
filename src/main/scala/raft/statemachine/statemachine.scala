@@ -1,7 +1,7 @@
 package raft
 
 
-import akka.actor.FSM
+import akka.actor.{LoggingFSM, FSM}
 /**
  * Created by kosii on 2014. 10. 20..
  */
@@ -35,7 +35,7 @@ package object statemachine {
   case class OK(value: Option[Int]) extends Response
 
 
-  class KVStore extends StateMachine[StateName, StateData] with FSM[StateName, StateData] {
+  class KVStore extends StateMachine[StateName, StateData] with LoggingFSM[StateName, StateData] {
     startWith(UniqueState, Data(None, Map()))
 
     when (UniqueState) {
