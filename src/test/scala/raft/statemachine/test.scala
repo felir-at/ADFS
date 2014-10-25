@@ -1,10 +1,13 @@
 package raft.statemachine.test
 
+
+import org.scalatest.concurrent.ScalaFutures
+
 import scala.language.postfixOps
 
 import akka.util.Timeout
 import raft.statemachine
-import raft.statemachine.{GetValue, OK, SetValue, KVStore}
+import raft.statemachine._
 
 import collection.mutable.Stack
 
@@ -20,7 +23,7 @@ import org.scalatest._
 import scala.util.{Success, Failure, Try}
 
 
-class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll {
+class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures {
 //  implicit val system = ActorSystem("MyActorSystem", ConfigFactory.load("test"))
   def this() = this(ActorSystem("MyActorSystem", ConfigFactory.load("test")))
 
@@ -33,10 +36,9 @@ class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r = actorRef ? SetValue(1, "a", 5)
-      r onComplete {
-        case Success(v) => v should be { statemachine.OK }
-        case Failure(th) => assert(false)
+      val r = actorRef ? SetValue(0, "a", 5)
+      whenReady(r) { value =>
+        value should be { statemachine.OK }
       }
 
       val result = r.value.get.get
@@ -48,16 +50,14 @@ class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r1 = actorRef ? SetValue(1, "a", 5)
-      r1 onComplete {
-        case Success(v) => v should be { statemachine.OK }
-        case Failure(th) => assert(false)
+      val r1 = actorRef ? SetValue(0, "a", 5)
+      whenReady(r1) { value =>
+        value should be { statemachine.OK }
       }
 
       val r2 = actorRef ? SetValue(1, "a", 5)
-      r2 onComplete {
-        case Success(v) => v should be { statemachine.OK }
-        case Failure(th) => assert(false)
+      whenReady(r2) { value =>
+        value should be { statemachine.OK }
       }
     }
 
@@ -66,11 +66,15 @@ class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
+
+      assert(actor.lastApplied == None)
+
       val r1 = actorRef ? GetValue("a")
-      r1 onComplete {
-        case Success(v) => v should be { statemachine.OK(None) }
-        case Failure(th) => assert(false)
+      whenReady(r1) { value =>
+        value should be { statemachine.OK(None) }
       }
+
+      assert(actor.lastApplied == None)
     }
 
 
@@ -78,17 +82,21 @@ class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
+      assert(actor.lastApplied == None)
+
       val r1 = actorRef ? GetValue("a")
-      r1 onComplete {
-        case Success(v) => v should be { statemachine.OK(None) }
-        case Failure(th) => assert(false)
+      whenReady(r1) { value =>
+        value should be { statemachine.OK(None) }
       }
 
+      assert(actor.lastApplied == None)
+
       val r2 = actorRef ? GetValue("a")
-      r2 onComplete {
-        case Success(v) => v should be { statemachine.OK(None) }
-        case Failure(th) => assert(false)
+      whenReady(r2) { value =>
+        value should be { statemachine.OK(None) }
       }
+
+      assert(actor.lastApplied == None)
     }
 
 
@@ -96,38 +104,84 @@ class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r1 = actorRef ? SetValue(1, "a", 5)
-      r1 onComplete {
-        case Success(v) => v should be { statemachine.OK }
-        case Failure(th) => assert(false)
+      assert(actor.lastApplied == None)
+
+      val r1 = actorRef ? SetValue(0, "a", 5)
+      whenReady(r1) { value =>
+        value should be { statemachine.OK }
       }
+
+      assert(actor.lastApplied == Some(0))
 
       val r2 = actorRef ? GetValue("a")
-      r2 onComplete {
-        case Success(v) => v should be { statemachine.OK(Some(5)) }
-        case Failure(th) => assert(false)
+      whenReady(r2) { value =>
+        value should be { statemachine.OK(Some(5)) }
+      }
+
+      assert(actor.lastApplied == Some(0))
+    }
+
+    "respond with RequestOutOfOrder" in {
+      val actorRef = TestActorRef[KVStore]
+      val actor = actorRef.underlyingActor
+
+      assert(actor.lastApplied == None)
+      val r1 = actorRef ? SetValue(1, "a", 5)
+      whenReady(r1) { value =>
+        value should be { statemachine.RequestOutOfOrder }
+      }
+
+      assert(actor.lastApplied == None)
+    }
+
+    "correctly update values" in {
+      val actorRef = TestActorRef[KVStore]
+      val actor = actorRef.underlyingActor
+
+      assert(actor.lastApplied == None)
+
+      val r1 = actorRef ? SetValue(0, "a", 5)
+
+      whenReady(r1) { value =>
+        value should be { statemachine.OK }
+      }
+
+      assert(actor.lastApplied == Some(0))
+
+      val r2 = actorRef ? GetValue("a")
+      whenReady(r2) { value =>
+        value should be { statemachine.OK(Some(5)) }
+      }
+      assert(actor.lastApplied == Some(0))
+
+      val r3 = actorRef ? SetValue(1, "a", 10)
+      whenReady(r3) { value =>
+        value should be { statemachine.OK }
+      }
+
+      assert(actor.lastApplied == Some(1))
+
+      val r4 = actorRef ? GetValue("a")
+      whenReady(r4) { value =>
+        value should be { statemachine.OK(Some(10)) }
+      }
+
+      assert(actor.lastApplied == Some(1))
+
+    }
+
+    "return OK when deleting non-existing key" in {
+      val actorRef = TestActorRef[KVStore]
+      val actor = actorRef.underlyingActor
+
+      assert(actor.lastApplied == None)
+
+      val r1  = actorRef ? DeleteValue(0, "a")
+      whenReady(r1) { value =>
+        value should be { statemachine.OK }
       }
     }
 
-  }
-
-  "A Stack" should {
-    "pop values in last-in-first-out order" in {
-      val stack = new Stack[Int]
-      stack.push(1)
-      stack.push(2)
-      stack.pop() should be(2)
-      stack.pop() should be(1)
-    }
-  }
-
-  it should {
-    "throw NoSuchElementException if an empty stack is popped" in {
-      val emptyStack = new Stack[Int]
-      a [NoSuchElementException] should be thrownBy {
-        emptyStack.pop()
-      }
-    }
   }
 
   override def afterAll: Unit = {

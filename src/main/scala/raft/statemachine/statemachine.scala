@@ -25,7 +25,7 @@ package object statemachine {
   case class Data(lastApplied: Option[Int], store: Map[String, Int]) extends StateData
 
   sealed trait Command
-  case class SetValue(index: Int, key:String, value: Int) extends Command
+  case class SetValue(index: Int, key: String, value: Int) extends Command
   case class DeleteValue(index: Int, key: String) extends Command
   case class GetValue(key: String) extends Command
 
@@ -33,6 +33,7 @@ package object statemachine {
   sealed trait Response
   case object OK extends Response
   case class OK(value: Option[Int]) extends Response
+  case object RequestOutOfOrder extends Response
 
 
   class KVStore extends StateMachine[StateName, StateData] with LoggingFSM[StateName, StateData] {
@@ -40,11 +41,19 @@ package object statemachine {
 
     when (UniqueState) {
       // TODO: itt igazabol az indexek ellenorzesenel azt kell ellenorizni, hogy az elkuldott parancs a soronkovetkezo indexet tartalmazza-e
+
       case Event(SetValue(index, key, value), Data(lastApplied, store)) => lastApplied match {
+        case Some(lastIndex) if (lastIndex + 1 == index) =>
+          stay using (Data(Some(index), store + (key -> value))) replying OK
+//          stay replying OK
+        case None if (index == 0) =>
+          stay using Data(Some(0), store + (key -> value)) replying OK
         case Some(lastIndex) if (lastIndex >= index) =>
+          // already applied
           stay replying OK
         case _ =>
-          stay using (Data(Some(index), store + (key -> value))) replying OK
+          // we can't skip requests
+          stay replying RequestOutOfOrder
       }
       case Event(DeleteValue(index, key), Data(lastApplied, store)) => lastApplied match {
         case Some(lastIndex) if (lastIndex >= index) =>
