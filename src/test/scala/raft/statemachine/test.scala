@@ -66,7 +66,7 @@ class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r1 = actorRef ? GetValue(1, "a")
+      val r1 = actorRef ? GetValue("a")
       r1 onComplete {
         case Success(v) => v should be { statemachine.OK(None) }
         case Failure(th) => assert(false)
@@ -78,13 +78,13 @@ class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r1 = actorRef ? GetValue(1, "a")
+      val r1 = actorRef ? GetValue("a")
       r1 onComplete {
         case Success(v) => v should be { statemachine.OK(None) }
         case Failure(th) => assert(false)
       }
 
-      val r2 = actorRef ? GetValue(1, "a")
+      val r2 = actorRef ? GetValue("a")
       r2 onComplete {
         case Success(v) => v should be { statemachine.OK(None) }
         case Failure(th) => assert(false)
@@ -102,7 +102,7 @@ class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
         case Failure(th) => assert(false)
       }
 
-      val r2 = actorRef ? GetValue(1, "a")
+      val r2 = actorRef ? GetValue("a")
       r2 onComplete {
         case Success(v) => v should be { statemachine.OK(Some(5)) }
         case Failure(th) => assert(false)

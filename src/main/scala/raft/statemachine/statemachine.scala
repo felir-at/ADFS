@@ -27,7 +27,7 @@ package object statemachine {
   sealed trait Command
   case class SetValue(index: Int, key:String, value: Int) extends Command
   case class DeleteValue(index: Int, key: String) extends Command
-  case class GetValue(index: Int, key: String) extends Command
+  case class GetValue(key: String) extends Command
 
 
   sealed trait Response
@@ -52,8 +52,8 @@ package object statemachine {
         case _ =>
           stay using(Data(Some(index), store - key)) replying OK
       }
-      case Event(GetValue(index, key), Data(lastApplied, store)) =>
-          stay using (Data(Some(index), store)) replying OK(store.lift(key))
+      case Event(GetValue(key), Data(lastApplied, store)) =>
+          stay using (Data(lastApplied, store)) replying OK(store.lift(key))
     }
 
     override def lastApplied: Option[Int] = {
