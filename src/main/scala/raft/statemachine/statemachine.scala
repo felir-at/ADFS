@@ -55,11 +55,19 @@ package object statemachine {
           // we can't skip requests
           stay replying RequestOutOfOrder
       }
+
       case Event(DeleteValue(index, key), Data(lastApplied, store)) => lastApplied match {
+        case Some(lastIndex) if (lastIndex + 1 == index) =>
+          stay using (Data(Some(index), store - key)) replying OK
+        //          stay replying OK
+        case None if (index == 0) =>
+          stay using Data(Some(0), store - key) replying OK
         case Some(lastIndex) if (lastIndex >= index) =>
+          // already applied
           stay replying OK
         case _ =>
-          stay using(Data(Some(index), store - key)) replying OK
+          // we can't skip requests
+          stay replying RequestOutOfOrder
       }
       case Event(GetValue(key), Data(lastApplied, store)) =>
           stay using (Data(lastApplied, store)) replying OK(store.lift(key))
