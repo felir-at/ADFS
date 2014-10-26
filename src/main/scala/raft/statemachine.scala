@@ -1,7 +1,6 @@
 package raft
 
-
-import akka.actor.{LoggingFSM, FSM}
+import akka.actor.{FSM, LoggingFSM}
 /**
  * Created by kosii on 2014. 10. 20..
  */

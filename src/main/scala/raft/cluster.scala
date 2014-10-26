@@ -1,5 +1,6 @@
 import akka.actor.{Props, ActorPath, FSM, Actor}
 import akka.util.Timeout
+import raft.persistence.Persistence
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
@@ -10,7 +11,7 @@ import scala.util.{Random, Try}
 /**
  * Created by kosii on 2014.10.04..
  */
-package object raft {
+package object cluster {
 
   type ServerId = Int
   type Term = Int
@@ -20,27 +21,57 @@ package object raft {
   case object Follower extends Role
   case object Candidate extends Role
 
+  case class ClusterConfiguration(currentConfig: Map[Int, ActorPath], newConfig: Map[Int, ActorPath], i: Option[Int])
+
 
   sealed trait Data
-  case class State(commitIndex: Option[Int] = None, lastApplied: Option[Int] = None, leaderId: Option[Int] = None) extends Data
-  case class CandidateState(commitIndex: Option[Int], lastApplied: Option[Int], leaderId: Option[Int], numberOfVotes: Int) extends Data
-  case class LeaderState(commitIndex: Option[Int], lastApplied: Option[Int], nextIndex: Map[Int, Option[Int]], matchIndex: Map[Int, Option[Int]]) extends Data
+  case class State(
+    clusterConfiguration: ClusterConfiguration,
+    commitIndex: Option[Int] = None,
+    lastApplied: Option[Int] = None,
+    leaderId: Option[Int] = None
+  ) extends Data
+
+  case class CandidateState(
+    clusterConfiguration: ClusterConfiguration,
+    commitIndex: Option[Int],
+    lastApplied: Option[Int],
+    leaderId: Option[Int],
+    numberOfVotes: Int
+  ) extends Data
+
+  case class LeaderState(
+    clusterConfiguration: ClusterConfiguration,
+    commitIndex: Option[Int],
+    lastApplied: Option[Int],
+    nextIndex: Map[Int, Option[Int]],
+    matchIndex: Map[Int, Option[Int]]
+  ) extends Data
 
 
   sealed trait RPC
-  case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) extends RPC
+  // general messages
   case class TermExpired(newTerm: Int) extends RPC
   case class InconsistentLog(id: Int) extends RPC
+
+  //
+  case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) extends RPC
   case class LogMatchesUntil(id: Int, matchIndex: Option[Int]) extends RPC
 
-  case class RequestVote(term: Int, candidateId: Int, lastLogIndex: Option[Int], lastLogTerm: Option[Int]) extends RPC
-  case class GrantVote(term: Int) extends RPC
-
+  // client side communication
   case class ClientCommand[T](t: T) extends RPC
   case class ReferToLeader(leaderId: Int) extends RPC
   case object WrongLeader extends RPC
   case class ClientCommandResults(status: Try[Any]) extends RPC
 
+  // voting protocoll
+  case class RequestVote(term: Int, candidateId: Int, lastLogIndex: Option[Int], lastLogTerm: Option[Int]) extends RPC
+  case class GrantVote(term: Int) extends RPC
+
+  // cluster management
+  case class Join(id: Int) extends RPC
+  case class Leave(id: Int) extends RPC
+  case class ReconfigureCluster(clusterConfiguration: ClusterConfiguration) extends RPC
 
   /** The FSM whose state are replicated all over our cluster
     *
@@ -58,7 +89,7 @@ package object raft {
 
 
   object RaftActor {
-    def props[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], minQuorumSize: Int, persistence: Persistence[T, D]): Props = {
+    def props[T, D](id: Int, clusterConfiguration: ClusterConfiguration, minQuorumSize: Int, persistence: Persistence[T, D]): Props = {
       Props(classOf[RaftActor[T, D]], id, clusterConfiguration, minQuorumSize, persistence)
     }
   }
@@ -68,16 +99,16 @@ package object raft {
    * @param clusterConfiguration contains the complete list of the cluster members (including self)
    * @param replicationFactor
    */
-  class RaftActor[T, D](id: Int, clusterConfiguration: Map[Int, ActorPath], replicationFactor: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
+  class RaftActor[T, D](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
 
     def electionTimeout = utils.NormalDistribution.nextGaussian(500, 40) milliseconds
     def currentTerm = persistence.getCurrentTerm
 
 
-    startWith(stateName = Follower, stateData = State())
+    startWith(stateName = Follower, stateData = State(clusterConfiguration))
 
     when(Follower, stateTimeout = 2 * electionTimeout) {
-      case Event(a: AppendEntries[T], State(commitIndex, lastApplied, _)) => {
+      case Event(a: AppendEntries[T], State(clusterConfiguration, commitIndex, lastApplied, _)) => {
         val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) = a
 
         if (term < currentTerm) {
@@ -89,7 +120,7 @@ package object raft {
           }
           if (persistence.termMatches(prevLogIndex, prevLogTerm)) {
             persistence.appendLog(prevLogIndex, persistence.getCurrentTerm, entries)
-            stay using State(commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
+            stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
           } else {
             stay replying InconsistentLog
           }
@@ -98,7 +129,7 @@ package object raft {
 
       }
 
-      case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(commitIndex, lastApplied, _)) => {
+      case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(clusterConfiguration, commitIndex, lastApplied, _)) => {
         if (term < currentTerm) {
           stay replying TermExpired(currentTerm)
         } else if (persistence.termMatches(lastLogIndex, lastLogIndex)) {
@@ -116,14 +147,14 @@ package object raft {
         } else stay
       }
 
-      case Event(StateTimeout, State(commitIndex, lastApplied, leaderId)) => {
+      case Event(StateTimeout, State(clusterConfiguration, commitIndex, lastApplied, leaderId)) => {
         println("No heartbeat received since")
         goto(Candidate)
-          .using(CandidateState(commitIndex, lastApplied, leaderId, 0))
+          .using(CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, 0))
 //          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
       }
 
-      case Event(t: ClientCommand[T], State(commitIndex, lastApplied, leaderIdOpt)) => {
+      case Event(t: ClientCommand[T], State(clusterConfiguration, commitIndex, lastApplied, leaderIdOpt)) => {
         leaderIdOpt match {
           case None => stay replying WrongLeader
           case Some(leaderPath) => stay replying ReferToLeader(leaderPath)
@@ -133,10 +164,11 @@ package object raft {
     }
 
     when(Leader, stateTimeout = electionTimeout) {
-      case Event(StateTimeout, l@LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) =>
+      case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) =>
         log.info("It's time to send a heartbeat!!!")
         for {
-          (id, path) <- clusterConfiguration
+          // FIX THIS
+          (id, path) <- clusterConfiguration.currentConfig
           if (id != this.id)
         } {
           context.actorSelection(path) ! AppendEntries(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm, Seq(), commitIndex)
@@ -145,7 +177,7 @@ package object raft {
       case Event(GrantVote(term), _) => {
         if (term > persistence.getCurrentTerm) {
           log.info("Received GrantVote for a term in the future, becoming Follower")
-          goto(Follower) using State()
+          goto(Follower) using State(clusterConfiguration)
         } else {
 
           log.info(s"Yo, I'm already the boss, but thanks ${sender}")
@@ -153,37 +185,46 @@ package object raft {
         }
       }
 
-      case Event(LogMatchesUntil(id, mmatchIndex), LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) => {
+      case Event(LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
         //TODO: verify if it's correct
-        stay using LeaderState(commitIndex, lastApplied, nextIndex, matchIndex + (id -> mmatchIndex))
+        stay using LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex + (id -> _matchIndex))
       }
 
-      case Event(InconsistentLog(id), LeaderState(commitIndex, lastApplied, nextIndex, matchIndex)) => {
+      case Event(InconsistentLog(id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
         // TODO: we have to decrement the corresponding nextIndex
-        stay using LeaderState(commitIndex, lastApplied, nextIndex + (id -> nextIndex.getOrElse(id, None)), matchIndex)
+        stay using LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex + (id -> nextIndex.getOrElse(id, None)), matchIndex)
       }
 
+      case Event(Join(_id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+
+        for {
+          (id, path) <- clusterConfiguration.currentConfig
+        } {
+          context.actorSelection(path) ! ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (_id -> sender.path), None))
+        }
+        stay replying ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (id -> sender.path), None))
+      }
     }
 
     when(Candidate, stateTimeout = utils.NormalDistribution.nextGaussian(500, 40) millis) {
       case Event(GrantVote(term), s: CandidateState) => {
         // TODO: maybe we should check the term?
         val numberOfVotes = s.numberOfVotes + 1
-        if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(clusterConfiguration.size / 2) + 1)) <= numberOfVotes) {
+        if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
           // TODO: we have to correctly fill out nextIndex and matchIndex
-          goto(Leader) using LeaderState(s.commitIndex, s.lastApplied, Map(), Map())
+          goto(Leader) using LeaderState(s.clusterConfiguration, s.commitIndex, s.lastApplied, Map(), Map())
         } else {
           stay using s.copy(numberOfVotes = numberOfVotes)
         }
       }
 
-      case Event(StateTimeout, CandidateState(commitIndex, lastApplied, leaderId, votes)) => {
+      case Event(StateTimeout, CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, votes)) => {
         log.info(s"vote failed, only ${votes} votes")
         log.info("Candidate -> Candidate")
 
         val currentTerm = persistence.incrementAndGetTerm
         for {
-          (id, path) <- clusterConfiguration
+          (id, path) <- clusterConfiguration.currentConfig
           if (id != this.id)
         } {
           log.info(s"requesting vote from ${id}")
@@ -192,12 +233,12 @@ package object raft {
         self ! GrantVote(currentTerm)
 
 
-        goto(Candidate) using CandidateState(commitIndex, lastApplied, leaderId, 0)
+        goto(Candidate) using CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, 0)
 
 
       }
 
-      case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(commitIndex, lastApplied, _)) => {
+      case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(clusterConfiguration, commitIndex, lastApplied, _)) => {
         if (term < currentTerm) {
           // NOTE: § 5.1
           stay replying TermExpired(currentTerm)
@@ -226,10 +267,10 @@ package object raft {
       case Follower -> Candidate =>
         log.info("transition: Follower -> Candidate")
         nextStateData match {
-          case CandidateState(commitIndex, lastApplied, leaderId, numberOfVotes) =>
+          case CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, numberOfVotes) =>
             val currentTerm = persistence.incrementAndGetTerm
             for {
-              (id, path) <- clusterConfiguration
+              (id, path) <- clusterConfiguration.currentConfig
               if (id != this.id)
             } {
               log.info(s"requesting vote from ${id}")
@@ -238,10 +279,10 @@ package object raft {
             log.info("voting for self")
             self ! GrantVote(currentTerm)
 
-          case s@LeaderState(_, _, _, _) =>
+          case s@LeaderState(_, _, _, _, _) =>
             log.error("invalid data in Candidate state: " + s)
 
-          case s@State(_, _, _) =>
+          case s@State(_, _, _, _) =>
             log.error("invalid data in Candidate state: " + s)
         }
 
@@ -266,10 +307,10 @@ package object raft {
 
 
         nextStateData match {
-          case CandidateState(commitIndex, lastApplied, leaderId, numberOfVotes) =>
+          case CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, numberOfVotes) =>
             val currentTerm = persistence.incrementAndGetTerm
             for {
-              (id, path) <- clusterConfiguration
+              (id, path) <- clusterConfiguration.currentConfig
               if (id != this.id)
             } {
               log.info(s"requesting vote from ${id}")
@@ -277,10 +318,10 @@ package object raft {
             }
             self ! GrantVote(currentTerm)
 
-          case s@LeaderState(_, _, _, _) =>
+          case s@LeaderState(_, _, _, _, _) =>
             log.error("invalid data in Candidate state: " + s)
 
-          case s@State(_, _, _) =>
+          case s@State(_, _, _, _) =>
             log.error("invalid data in Candidate state: " + s)
 
         }
@@ -290,104 +331,6 @@ package object raft {
     initialize()
   }
 
-
-  trait Persistence[T, D] {
-
-    def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[T]): Unit
-
-    /** Returns None if log is empty, otherwise returns Some(l), if log is of length l
-      *
-      */
-    def lastLogIndex: Option[Int]
-
-    /** Returns None if log is empty, otherwise returns Some(t), if the term of the last log entry is t
-      *
-      */
-    def lastLogTerm: Option[Int]
-
-    def termMatches(prevLogIndex: Option[Int], prevLogTerm: Option[Int]): Boolean
-
-    def snapshot: D
-
-    def getTerm(index: Int): Option[Int]
-
-    def setCurrentTerm(term: Int)
-
-    def getCurrentTerm: Int
-
-    // TODO: this should be atomic or something?
-    def incrementAndGetTerm: Int
-
-    def setVotedFor(serverId: Int)
-
-    def getVotedFor: Option[Int]
-
-    def clearVotedFor(): Unit
-
-  }
-
-  case class InMemoryPersistence() extends Persistence[(String, Int), Map[String, Int]] {
-    var logs = Vector[(Int, (String, Int))]()
-    var currentTerm: Int = 0
-    var votedFor: Option[Int] = None
-
-    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(String, Int)]): Unit = prevLogIndex match {
-      case None => logs = entries.map((term, _)).toVector
-      case Some(index) => logs = logs.take(index + 1) ++ entries.map((term, _))
-    }
-
-
-    override def setCurrentTerm(term: Int) = {
-      votedFor = None
-      currentTerm = term
-    }
-
-    override def getCurrentTerm = currentTerm
-
-    override def snapshot: Map[String, Int] = ???
-
-    override def getVotedFor: Option[Int] = votedFor
-
-    override def setVotedFor(serverId: Int): Unit = {
-      votedFor = Some(serverId)
-    }
-
-    override def getTerm(index: Int): Option[Int] = {
-      logs.lift(index).map(_._1)
-    }
-
-    override def incrementAndGetTerm: Int = this.synchronized {
-      currentTerm += 1
-      currentTerm
-    }
-
-    /** Returns None if log is empty, otherwise returns Some(l-1), if log is of length l
-      *
-      */
-    override def lastLogIndex: Option[Int] = logs.size match {
-      case 0 => None
-      case s => Some(s - 1)
-    }
-
-    /** Returns None if log is empty, otherwise returns Some(t), if the term of the last log entry is t
-      *
-      */
-    override def lastLogTerm: Option[Int] = for {
-      i <- lastLogIndex
-    } yield {
-      logs(i)._1
-    }
-
-    override def clearVotedFor(): Unit = {
-      votedFor = None
-      ()
-    }
-
-    override def termMatches(prevLogIndex: Option[Int], prevLogTerm: Option[Int]): Boolean = prevLogIndex match {
-      case None => true
-      case Some(index) =>  prevLogTerm == getTerm(index)
-    }
-  }
 
 }
 

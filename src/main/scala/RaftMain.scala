@@ -1,7 +1,8 @@
 import akka.actor.{PoisonPill, Props, ActorSystem, ActorPath}
 import akka.cluster.Cluster
+import cluster.{ClusterConfiguration, RaftActor}
 import com.typesafe.config.ConfigFactory
-import raft.{InMemoryPersistence, RaftActor}
+import raft.persistence.InMemoryPersistence
 
 /**
  * Created by kosii on 2014. 10. 18..
@@ -17,12 +18,13 @@ object RaftMain extends App {
   val persistence3 = InMemoryPersistence()
 
 
-  val clusterConfiguration: Map[Int, ActorPath] = Map(
+  val clusterConfigurationMap: Map[Int, ActorPath] = Map(
     1 -> ActorPath.fromString("akka://system/user/1"),
     2 -> ActorPath.fromString("akka://system/user/2"),
     3 -> ActorPath.fromString("akka://system/user/3")
   )
 
+  val clusterConfiguration = ClusterConfiguration(clusterConfigurationMap, Map(), None)
 
   Cluster(system).registerOnMemberUp {
 
@@ -43,12 +45,12 @@ object RaftMain extends App {
         3, clusterConfiguration, 3, persistence3
       ),
       "3")
-//    println("sleeping")
-//    Thread.sleep(3000)
-//    println("end sleeping")
-//
-//    println("killing raft1")
-//    raft1 ! PoisonPill
+    println("sleeping")
+    Thread.sleep(3000)
+    println("end sleeping")
+
+    println("killing raft1")
+    raft1 ! PoisonPill
 
   }
 
