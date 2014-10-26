@@ -6,7 +6,7 @@ import org.scalatest.concurrent.ScalaFutures
 import scala.language.postfixOps
 
 import akka.util.Timeout
-import raft.statemachine
+import raft.{statemachine}
 import raft.statemachine._
 
 import collection.mutable.Stack
@@ -23,7 +23,7 @@ import org.scalatest._
 import scala.util.{Success, Failure, Try}
 
 
-class ExampleSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures {
+class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures {
 //  implicit val system = ActorSystem("MyActorSystem", ConfigFactory.load("test"))
   def this() = this(ActorSystem("MyActorSystem", ConfigFactory.load("test")))
 
