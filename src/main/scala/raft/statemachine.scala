@@ -10,9 +10,21 @@ package object statemachine {
   // TODO: valahogy meg kell csinalni, hogy az automatikusan ide erkezo uzenetek be legyenek csomagolva egy ClientCommand wrappre classba
   //    es az innen elkuldott cuccok pedig egy ClientResponse wrapper classba, anelkul, hogy a traitet implementalo user errol barmit tudna
 
+
+
+  /** The FSM whose state are replicated all over our cluster
+    *
+    * @tparam S state name
+    * @tparam D state data
+    */
   trait StateMachine[S, D] {
     self: FSM[S, D] =>
 
+    /** As D.Ongaro stated here https://groups.google.com/d/msg/raft-dev/KIozjYuq5m0/XsmYAzLpOikJ, lastApplied
+      * should be as durable as the state machine
+      *
+      * @return
+      */
     def lastApplied: Option[Int]
   }
 

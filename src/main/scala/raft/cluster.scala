@@ -1,10 +1,12 @@
 import akka.actor.{Props, ActorPath, FSM, Actor}
 import akka.util.Timeout
 import raft.persistence.Persistence
+import raft.statemachine.StateMachine
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
 import scala.language.higherKinds
+import scala.reflect._
 import scala.util.{Random, Try}
 
 
@@ -73,24 +75,10 @@ package object cluster {
   case class Leave(id: Int) extends RPC
   case class ReconfigureCluster(clusterConfiguration: ClusterConfiguration) extends RPC
 
-  /** The FSM whose state are replicated all over our cluster
-    *
-    * @tparam S
-    * @tparam D
-    */
-  trait RaftFSM[S, D] extends FSM[S, D] {
-    /** As D.Ongaro stated here https://groups.google.com/d/msg/raft-dev/KIozjYuq5m0/XsmYAzLpOikJ, lastApplied
-      * should be as durable as the state machine
-      *
-      * @return
-      */
-    def lastApplied = Int
-  }
-
 
   object RaftActor {
-    def props[T, D](id: Int, clusterConfiguration: ClusterConfiguration, minQuorumSize: Int, persistence: Persistence[T, D]): Props = {
-      Props(classOf[RaftActor[T, D]], id, clusterConfiguration, minQuorumSize, persistence)
+    def props[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, minQuorumSize: Int, persistence: Persistence[T, D], factory: PropFactory[M]): Props = {
+      Props(classOf[RaftActor[T, D, M]], id, clusterConfiguration, minQuorumSize, persistence, factory)
     }
   }
 
@@ -99,11 +87,15 @@ package object cluster {
    * @param clusterConfiguration contains the complete list of the cluster members (including self)
    * @param replicationFactor
    */
-  class RaftActor[T, D](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D]) extends FSM[Role, Data] {
+
+  type PropFactory[T] = Class[_] => Props
+
+  class RaftActor[T, D, M <: StateMachine[_, _] : ClassTag](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], factory: PropFactory[M]) extends FSM[Role, Data] {
 
     def electionTimeout = utils.NormalDistribution.nextGaussian(500, 40) milliseconds
     def currentTerm = persistence.getCurrentTerm
 
+    val stateMachine = context.actorOf(factory(classTag[M].runtimeClass))
 
     startWith(stateName = Follower, stateData = State(clusterConfiguration))
 
