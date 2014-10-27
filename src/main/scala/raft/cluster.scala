@@ -153,14 +153,18 @@ package object cluster {
 
     }
 
+    def determineCommitIndex(clusterConfiguration: ClusterConfiguration, matchIndex: Map[Int, Option[Int]]): Option[Int] = ???
+
     when(Leader, stateTimeout = electionTimeout) {
       case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) =>
         log.info("It's time to send a heartbeat!!!")
         for {
           // FIX THIS
+          // todo: fix what? :\
           (id, path) <- clusterConfiguration.currentConfig
           if (id != this.id)
         } {
+          // TODO: when sending heartbeat's we have to send them from the nextIndex and not just an empty `entries` sequence
           context.actorSelection(path) ! AppendEntries(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm, Seq(), commitIndex)
         }
         stay using l
@@ -177,12 +181,19 @@ package object cluster {
 
       case Event(LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
         //TODO: verify if it's correct
-        stay using LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex + (id -> _matchIndex))
+        val newMatchIndex = matchIndex + (id -> _matchIndex)
+        val newCommitIndex:Option[Int] = determineCommitIndex(clusterConfiguration, newMatchIndex)
+        stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, nextIndex, newMatchIndex)
       }
 
       case Event(InconsistentLog(id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
         // TODO: we have to decrement the corresponding nextIndex
-        stay using LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex + (id -> nextIndex.getOrElse(id, None)), matchIndex)
+        // TODO: done, we have to test it
+        val newIndex = nextIndex.getOrElse(id, None) match {
+          case Some(index) if (index > 0) => Some(index - 1)
+          case _ => None
+        }
+        stay using LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex + (id -> newIndex), matchIndex)
       }
 
       case Event(Join(_id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
