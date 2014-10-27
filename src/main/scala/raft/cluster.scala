@@ -77,8 +77,8 @@ package object cluster {
 
 
   object RaftActor {
-    def props[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, minQuorumSize: Int, persistence: Persistence[T, D], factory: PropFactory[M]): Props = {
-      Props(classOf[RaftActor[T, D, M]], id, clusterConfiguration, minQuorumSize, persistence, factory)
+    def props[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, minQuorumSize: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*): Props = {
+      Props(classOf[RaftActor[T, D, M]], id, clusterConfiguration, minQuorumSize, persistence, clazz, args)
     }
   }
 
@@ -88,14 +88,12 @@ package object cluster {
    * @param replicationFactor
    */
 
-  type PropFactory[T] = Class[_] => Props
-
-  class RaftActor[T, D, M <: StateMachine[_, _] : ClassTag](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], factory: PropFactory[M]) extends FSM[Role, Data] {
+  class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends FSM[Role, Data] {
 
     def electionTimeout = utils.NormalDistribution.nextGaussian(500, 40) milliseconds
     def currentTerm = persistence.getCurrentTerm
 
-    val stateMachine = context.actorOf(factory(classTag[M].runtimeClass))
+    val stateMachine = context.actorOf(Props(clazz, args: _*))
 
     startWith(stateName = Follower, stateData = State(clusterConfiguration))
 

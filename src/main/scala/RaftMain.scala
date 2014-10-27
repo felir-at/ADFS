@@ -1,6 +1,6 @@
 import akka.actor.{PoisonPill, Props, ActorSystem, ActorPath}
 import akka.cluster.Cluster
-import cluster.{PropFactory, ClusterConfiguration, RaftActor}
+import cluster.{ClusterConfiguration, RaftActor}
 import com.typesafe.config.ConfigFactory
 import raft.persistence.InMemoryPersistence
 import raft.statemachine.KVStore
@@ -27,25 +27,24 @@ object RaftMain extends App {
 
   val clusterConfiguration = ClusterConfiguration(clusterConfigurationMap, Map(), None)
 
-  def KVFactory: PropFactory[KVStore] = Props(_)
 
   Cluster(system).registerOnMemberUp {
 
     val raft1 = system.actorOf(
       RaftActor.props[(String, Int), Map[String, Int], KVStore](
-        1, clusterConfiguration, 3, persistence1, KVFactory
+        1, clusterConfiguration, 3, persistence1, classOf[KVStore]
       ),
       "1")
 
     val raft2 = system.actorOf(
       RaftActor.props(
-        2, clusterConfiguration, 3, persistence2, KVFactory
+        2, clusterConfiguration, 3, persistence2, classOf[KVStore]
       ),
       "2")
 
     val raft3 = system.actorOf(
       RaftActor.props(
-        3, clusterConfiguration, 3, persistence3, KVFactory
+        3, clusterConfiguration, 3, persistence3, classOf[KVStore]
       ),
       "3")
     println("sleeping")
