@@ -9,6 +9,8 @@ package object persistence {
 
     def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[T]): Unit
 
+    def logsBetween(start: Int, stop: Int): Seq[T]
+
     /** Returns None if log is empty, otherwise returns Some(l), if log is of length l
       *
       */
@@ -106,7 +108,7 @@ package object persistence {
 
     override def lastClusterConfigurationIndex: Option[Int] = ???
 
-
+    override def logsBetween(start: Int, stop: Int): Seq[(String, Int)] = logs.slice(start, stop).map { _._2 }
   }
 
 }

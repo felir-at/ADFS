@@ -128,7 +128,15 @@ package object cluster {
           }
           if (persistence.termMatches(prevLogIndex, prevLogTerm)) {
             persistence.appendLog(prevLogIndex, persistence.getCurrentTerm, entries)
-            stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
+            // TODO: check boundaries
+            for {
+              start <- commitIndex
+              stop <- leaderCommit
+            } {
+              // TODO: we should really do something with last applied
+              persistence.logsBetween(start, stop).foreach({ stateMachine ! _ })
+            }
+            stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, lastApplied = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
           } else {
             stay replying InconsistentLog
           }
