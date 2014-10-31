@@ -80,6 +80,24 @@ package object cluster {
     def props[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, minQuorumSize: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*): Props = {
       Props(classOf[RaftActor[T, D, M]], id, clusterConfiguration, minQuorumSize, persistence, clazz, args)
     }
+
+
+    def determineCommitIndex(clusterConfiguration: ClusterConfiguration, matchIndex: Map[Int, Option[Int]]): Option[Int] = {
+      val a = matchIndex.map({case (k, v) => (v, k)})
+
+      // we take the median of the sorted
+      val currentMatchIndexes: Vector[Option[Int]] = {for {
+        (id, path) <- clusterConfiguration.currentConfig
+      } yield { matchIndex.getOrElse(id, None) }}.toVector.sorted
+
+      val newMatchIndexes = {
+        for {
+          (id, path) <- clusterConfiguration.newConfig
+        } yield { matchIndex.get(id) }
+      }
+
+
+    }
   }
 
   /**
@@ -153,7 +171,6 @@ package object cluster {
 
     }
 
-    def determineCommitIndex(clusterConfiguration: ClusterConfiguration, matchIndex: Map[Int, Option[Int]]): Option[Int] = ???
 
     when(Leader, stateTimeout = electionTimeout) {
       case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) =>
