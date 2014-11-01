@@ -1,7 +1,7 @@
 import akka.actor.{ActorPath, ActorSystem, PoisonPill}
 import akka.cluster.Cluster
-import cluster.{ClusterConfiguration, RaftActor}
 import com.typesafe.config.ConfigFactory
+import raft.cluster.{RaftActor, ClusterConfiguration}
 import raft.persistence.InMemoryPersistence
 import raft.statemachine.KVStore
 
