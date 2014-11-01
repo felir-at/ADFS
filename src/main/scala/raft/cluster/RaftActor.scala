@@ -178,6 +178,29 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       }
       stay replying ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (id -> sender.path), None))
     }
+
+    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), LeaderState(clusterConfiguration, commitIndex, lastApplied, _, _)) => {
+      if (term < currentTerm) {
+        // NOTE: § 5.1
+        stay replying TermExpired(currentTerm)
+      } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm) {
+        if (term > currentTerm) {
+          persistence.clearVotedFor()
+        }
+        persistence.getVotedFor match {
+          case None =>
+            persistence.setVotedFor(candidateId)
+            stay replying GrantVote(term)
+          case Some(id) if (id == candidateId) =>
+            stay replying GrantVote(term)
+          case _ =>
+            stay
+        }
+      } else {
+        stay replying InconsistentLog(this.id)
+      }
+    }
+
   }
 
   when(Candidate, stateTimeout = NormalDistribution.nextGaussian(500, 40) millis) {
