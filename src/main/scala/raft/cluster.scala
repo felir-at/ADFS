@@ -1,14 +1,11 @@
-import akka.actor.{Props, ActorPath, FSM, Actor}
-import akka.util.Timeout
+import adfs.utils._
+import akka.actor.{ActorPath, FSM, Props}
 import raft.persistence.Persistence
 import raft.statemachine.StateMachine
+
 import scala.concurrent.duration._
-import scala.language.postfixOps
-
-import scala.language.higherKinds
-import scala.reflect._
-import scala.util.{Random, Try}
-
+import scala.language.{higherKinds, postfixOps}
+import scala.util.Try
 
 /**
  * Created by kosii on 2014.10.04..
@@ -108,7 +105,7 @@ package object cluster {
 
   class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends FSM[Role, Data] {
 
-    def electionTimeout = utils.NormalDistribution.nextGaussian(500, 40) milliseconds
+    def electionTimeout = NormalDistribution.nextGaussian(500, 40) milliseconds
     def currentTerm = persistence.getCurrentTerm
 
     val stateMachine = context.actorOf(Props(clazz, args: _*))
@@ -232,7 +229,7 @@ package object cluster {
       }
     }
 
-    when(Candidate, stateTimeout = utils.NormalDistribution.nextGaussian(500, 40) millis) {
+    when(Candidate, stateTimeout = NormalDistribution.nextGaussian(500, 40) millis) {
       case Event(GrantVote(term), s: CandidateState) => {
         // TODO: maybe we should check the term?
         val numberOfVotes = s.numberOfVotes + 1

@@ -1,3 +1,5 @@
+package adfs
+
 import java.util.concurrent.ThreadLocalRandom
 
 import com.typesafe.config.{ConfigFactory, Config}

@@ -2,10 +2,9 @@ package cluster
 
 import java.io.File
 
-import akka.actor.{Props, ActorSystem}
-import akka.cluster.Cluster
-import com.typesafe.config.{ConfigFactory, Config}
-import utils._
+import adfs.utils._
+import akka.actor.{ActorSystem, Props}
+import com.typesafe.config.ConfigFactory
 
 /**
  * Created by kosii on 2014.10.02..

@@ -1,4 +1,4 @@
-import akka.actor.{PoisonPill, Props, ActorSystem, ActorPath}
+import akka.actor.{ActorPath, ActorSystem, PoisonPill}
 import akka.cluster.Cluster
 import cluster.{ClusterConfiguration, RaftActor}
 import com.typesafe.config.ConfigFactory
@@ -12,7 +12,7 @@ object RaftMain extends App {
 
   val commonConfig = ConfigFactory.load()
 
-  val system = ActorSystem("system", utils.remoteConfig("127.0.0.1", 2551, commonConfig))
+  val system = ActorSystem("system", adfs.utils.remoteConfig("127.0.0.1", 2551, commonConfig))
 
   val persistence1 = InMemoryPersistence()
   val persistence2 = InMemoryPersistence()
