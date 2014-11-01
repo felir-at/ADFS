@@ -30,13 +30,23 @@ object RaftActor {
     )
 
     val newMatchIndexMedian = median(
-      clusterConfiguration.currentConfig.map(
+      clusterConfiguration.newConfig.map(
         i => matchIndex.getOrElse(i._1, None)
       ).toVector.sorted
     )
 
-
-    Seq(currentMatchIndexMedian, newMatchIndexMedian).min
+    // we should not take into account empty cluster configurations
+    (clusterConfiguration.currentConfig.size, clusterConfiguration.newConfig.size) match {
+      case (0, 0) => {
+        // we should not be here
+        // TODO: maybe this function should be in the class so to be able use the logger?
+        assert(false)
+        None
+      }
+      case (0, _) => newMatchIndexMedian
+      case (_, 0) => currentMatchIndexMedian
+      case _ => Seq(currentMatchIndexMedian, newMatchIndexMedian).min
+    }
   }
 }
 
@@ -147,13 +157,11 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
     case Event(LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
       //TODO: verify if it's correct
       val newMatchIndex = matchIndex + (id -> _matchIndex)
-      val newCommitIndex:Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
+      val newCommitIndex: Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
       stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, nextIndex, newMatchIndex)
     }
 
     case Event(InconsistentLog(id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
-      // TODO: we have to decrement the corresponding nextIndex
-      // TODO: done, we have to test it
       val newIndex = nextIndex.getOrElse(id, None) match {
         case Some(index) if (index > 0) => Some(index - 1)
         case _ => None
