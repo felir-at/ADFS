@@ -80,20 +80,22 @@ package object cluster {
 
 
     def determineCommitIndex(clusterConfiguration: ClusterConfiguration, matchIndex: Map[Int, Option[Int]]): Option[Int] = {
-      val a = matchIndex.map({case (k, v) => (v, k)})
 
       // we take the median of the sorted
-      val currentMatchIndexes: Vector[Option[Int]] = {for {
-        (id, path) <- clusterConfiguration.currentConfig
-      } yield { matchIndex.getOrElse(id, None) }}.toVector.sorted
+      val currentMatchIndexMedian = median(
+        clusterConfiguration.currentConfig.map(
+          i => matchIndex.getOrElse(i._1, None)
+        ).toVector.sorted
+      )
 
-      val newMatchIndexes = {
-        for {
-          (id, path) <- clusterConfiguration.newConfig
-        } yield { matchIndex.get(id) }
-      }
+      val newMatchIndexMedian = median(
+        clusterConfiguration.currentConfig.map(
+          i => matchIndex.getOrElse(i._1, None)
+        ).toVector.sorted
+      )
 
 
+      Seq(currentMatchIndexMedian, newMatchIndexMedian).min
     }
   }
 
@@ -204,7 +206,7 @@ package object cluster {
       case Event(LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
         //TODO: verify if it's correct
         val newMatchIndex = matchIndex + (id -> _matchIndex)
-        val newCommitIndex:Option[Int] = determineCommitIndex(clusterConfiguration, newMatchIndex)
+        val newCommitIndex:Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
         stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, nextIndex, newMatchIndex)
       }
 
