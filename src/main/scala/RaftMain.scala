@@ -1,9 +1,16 @@
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
+import scala.language.postfixOps
+
 import akka.actor.{ActorPath, ActorSystem, PoisonPill}
 import akka.cluster.Cluster
+import akka.pattern.ask
 import com.typesafe.config.ConfigFactory
-import raft.cluster.{RaftActor, ClusterConfiguration}
+
+
+import raft.cluster.{ClientCommand, RaftActor, ClusterConfiguration}
 import raft.persistence.InMemoryPersistence
-import raft.statemachine.KVStore
+import raft.statemachine.{Command, GetValue, KVStore}
 
 /**
  * Created by kosii on 2014. 10. 18..
@@ -31,7 +38,7 @@ object RaftMain extends App {
   Cluster(system).registerOnMemberUp {
 
     val raft1 = system.actorOf(
-      RaftActor.props[(String, Int), Map[String, Int], KVStore](
+      RaftActor.props[Command, Map[String, Int], KVStore](
         1, clusterConfiguration, 3, persistence1, classOf[KVStore]
       ),
       "1")
@@ -47,8 +54,22 @@ object RaftMain extends App {
         3, clusterConfiguration, 3, persistence3, classOf[KVStore]
       ),
       "3")
-    println("sleeping")
+
+
     Thread.sleep(3000)
+
+    implicit val timeout: akka.util.Timeout = akka.util.Timeout(1 seconds)
+    val r1 = raft1 ? ClientCommand(GetValue("a"))
+    r1.onComplete({ println(_)})
+
+    val r2 = raft2 ? ClientCommand(GetValue("a"))
+    r2.onComplete({ println(_)})
+
+    val r3 = raft3 ? ClientCommand(GetValue("a"))
+    r3.onComplete({ println(_)})
+
+    println("sleeping")
+    Thread.sleep(30000)
     println("end sleeping")
 
     println("killing raft1")

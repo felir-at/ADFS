@@ -1,5 +1,7 @@
 package raft
 
+import raft.statemachine.Command
+
 /**
  * Created by kosii on 2014. 10. 26..
  */
@@ -7,14 +9,30 @@ package object persistence {
 
   trait Persistence[T, D] {
 
+    /** Append log starting from prevLogIndex
+     *
+     * @param prevLogIndex
+     * @param term
+     * @param entries
+     */
     def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[T]): Unit
+
+    /** Append a single log entry at the end of the log
+     *
+     * @param term
+     * @param entry
+     */
+    def appendLog(term: Int, entry: T): Unit
 
     def logsBetween(start: Int, stop: Int): Seq[T]
 
-    /** Returns None if log is empty, otherwise returns Some(l), if log is of length l
+    /** Returns None if log is empty, otherwise returns Some(l-1), if log is of length l
       *
       */
+    // TODO: rename it to lastIndex to be more consistent with the paper
     def lastLogIndex: Option[Int]
+
+    def nextIndex: Int
 
     /** Returns None if log is empty, otherwise returns Some(t), if the term of the last log entry is t
       *
@@ -44,15 +62,25 @@ package object persistence {
 
   }
 
-  case class InMemoryPersistence() extends Persistence[(String, Int), Map[String, Int]] {
-    var logs = Vector[(Int, (String, Int))]()
+  case class InMemoryPersistence() extends Persistence[Command, Map[String, Int]] {
+    var logs = Vector[(Int, Command)]()
     var currentTerm: Int = 0
     var votedFor: Option[Int] = None
 
-    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(String, Int)]): Unit = prevLogIndex match {
+    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[Command]): Unit = prevLogIndex match {
       case None => logs = entries.map((term, _)).toVector
       case Some(index) => logs = logs.take(index + 1) ++ entries.map((term, _))
     }
+
+    /** Append a single log entry at the end of the log
+      *
+      * @param term
+      * @param entry
+      */
+    override def appendLog(term: Int, entry: Command): Unit = {
+      logs = logs :+ ((term, entry))
+    }
+
 
 
     override def setCurrentTerm(term: Int) = {
@@ -102,13 +130,24 @@ package object persistence {
     }
 
     override def termMatches(prevLogIndex: Option[Int], prevLogTerm: Option[Int]): Boolean = prevLogIndex match {
-      case None => true
-      case Some(index) =>  prevLogTerm == getTerm(index)
+      case None => {
+        println("its None, so returning true")
+        true
+      }
+      case Some(index) =>  {
+        val a = (prevLogTerm == getTerm(index))
+        println(s"${prevLogTerm} ${getTerm(index)}")
+        println(s"the result of the comparison is ${a}")
+        a
+      }
     }
 
     override def lastClusterConfigurationIndex: Option[Int] = ???
 
-    override def logsBetween(start: Int, stop: Int): Seq[(String, Int)] = logs.slice(start, stop).map { _._2 }
+    override def logsBetween(start: Int, stop: Int): Seq[Command] = logs.slice(start, stop).map { _._2 }
+
+    override def nextIndex: Int = logs.size
+
   }
 
 }

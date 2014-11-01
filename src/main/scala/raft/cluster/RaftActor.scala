@@ -88,7 +88,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
           }
           stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, lastApplied = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
-          stay replying InconsistentLog
+          stay replying InconsistentLog(this.id)
         }
 
       }
@@ -131,16 +131,32 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
 
   when(Leader, stateTimeout = electionTimeout) {
-    case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) =>
+    case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+      val ClientCommand(c) = t
+      persistence.appendLog(persistence.getCurrentTerm, c)
+      stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
+    }
+
+    case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndexes, matchIndex)) =>
       log.info("It's time to send a heartbeat!!!")
       for {
-      // FIX THIS
-      // todo: fix what? :\
-        (id, path) <- clusterConfiguration.currentConfig
+        (id, path) <- clusterConfiguration.currentConfig ++ clusterConfiguration.newConfig
         if (id != this.id)
       } {
+        val prevLogIndex = nextIndexes.getOrElse(id, None) match {
+          case Some(i) if (i > 0) => Some(i - 1)
+          case _ => None
+        }
+        val nextIndex = nextIndexes.getOrElse(id, None).getOrElse(0)
+
         // TODO: when sending heartbeat's we have to send them from the nextIndex and not just an empty `entries` sequence
-        context.actorSelection(path) ! AppendEntries(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm, Seq(), commitIndex)
+        // TODO: implemented, need to check
+        log.info(s"follower ${id}'s nextIndex: ${nextIndex}")
+        log.info("sending data with the heartbeat: " + persistence.logsBetween(nextIndex, persistence.nextIndex))
+        context.actorSelection(path) ! AppendEntries(
+          currentTerm, this.id, prevLogIndex, prevLogIndex.flatMap(persistence.getTerm(_)),
+          persistence.logsBetween(nextIndex, persistence.nextIndex), commitIndex
+        )
       }
       stay using l
     case Event(GrantVote(term), _) => {
@@ -154,14 +170,17 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       }
     }
 
-    case Event(LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+    case Event(l@LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+      log.info(s"${l} received")
       //TODO: verify if it's correct
+      val newNextIndex: Map[Int, Option[Int]] = nextIndex + (id -> _matchIndex.map({ i => i + 1}) )
       val newMatchIndex = matchIndex + (id -> _matchIndex)
       val newCommitIndex: Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
-      stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, nextIndex, newMatchIndex)
+      stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, newNextIndex, newMatchIndex)
     }
 
-    case Event(InconsistentLog(id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+    case Event(i@InconsistentLog(id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+      log.info(s"${i} received")
       val newIndex = nextIndex.getOrElse(id, None) match {
         case Some(index) if (index > 0) => Some(index - 1)
         case _ => None
@@ -235,25 +254,28 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
     }
 
-    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(clusterConfiguration, commitIndex, lastApplied, _)) => {
+    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), CandidateState(clusterConfiguration, commitIndex, lastApplied, _, _)) => {
       if (term < currentTerm) {
         // NOTE: § 5.1
         stay replying TermExpired(currentTerm)
       } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm) {
         if (term > currentTerm) {
           persistence.clearVotedFor()
+          goto(Follower) using State(clusterConfiguration, commitIndex, lastApplied, None)
+        } else {
+          stay
         }
-        persistence.getVotedFor match {
-          case None =>
-            persistence.setVotedFor(candidateId)
-            stay replying GrantVote(term)
-          case Some(id) if (id == candidateId) =>
-            stay replying GrantVote(term)
-          case _ =>
-            stay
-        }
+//        persistence.getVotedFor match {
+//          case None =>
+//            persistence.setVotedFor(candidateId)
+//            stay replying GrantVote(term)
+//          case Some(id) if (id == candidateId) =>
+//            stay replying GrantVote(term)
+//          case _ =>
+//            stay
+//        }
       } else {
-        stay replying InconsistentLog
+        stay replying InconsistentLog(this.id)
       }
     }
   }
