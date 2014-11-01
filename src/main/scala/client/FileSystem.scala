@@ -6,7 +6,9 @@ import operations.{DataRead, WriteDone}
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import utils.remoteConfig
+
+import adfs.utils.remoteConfig
+
 /**
  *
  */

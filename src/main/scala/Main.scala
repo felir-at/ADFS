@@ -1,12 +1,5 @@
-import java.io.File
-
-import akka.actor.ActorSystem
-import akka.cluster.Cluster
-import cluster.FileRegistry.RegisterFile
-import cluster.{FileStorage, MemberActor}
+import cluster.FileStorage
 import com.typesafe.config.ConfigFactory
-
-import utils.remoteConfig
 
 /**
  * Created by kosii on 2014.09.20..
