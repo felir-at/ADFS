@@ -1,5 +1,6 @@
 package raft
 
+import akka.actor.ActorRef
 import raft.statemachine.Command
 
 /**
@@ -15,16 +16,16 @@ package object persistence {
      * @param term
      * @param entries
      */
-    def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[T]): Unit
+    def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(T, ActorRef)]): Unit
 
     /** Append a single log entry at the end of the log
      *
      * @param term
      * @param entry
      */
-    def appendLog(term: Int, entry: T): Unit
+    def appendLog(term: Int, entry: T, ref: ActorRef): Unit
 
-    def logsBetween(start: Int, stop: Int): Seq[T]
+    def logsBetween(start: Int, stop: Int): Seq[(T, ActorRef)]
 
     /** Returns None if log is empty, otherwise returns Some(l-1), if log is of length l
       *
@@ -63,13 +64,13 @@ package object persistence {
   }
 
   case class InMemoryPersistence() extends Persistence[Command, Map[String, Int]] {
-    var logs = Vector[(Int, Command)]()
+    var logs = Vector[(Int, Command, ActorRef)]()
     var currentTerm: Int = 0
     var votedFor: Option[Int] = None
 
-    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[Command]): Unit = prevLogIndex match {
-      case None => logs = entries.map((term, _)).toVector
-      case Some(index) => logs = logs.take(index + 1) ++ entries.map((term, _))
+    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(Command, ActorRef)]): Unit = prevLogIndex match {
+      case None => logs = entries.map(i => (term, i._1, i._2)).toVector
+      case Some(index) => logs = logs.take(index + 1) ++ entries.map(i => (term, i._1, i._2))
     }
 
     /** Append a single log entry at the end of the log
@@ -77,8 +78,8 @@ package object persistence {
       * @param term
       * @param entry
       */
-    override def appendLog(term: Int, entry: Command): Unit = {
-      logs = logs :+ ((term, entry))
+    override def appendLog(term: Int, entry: Command, ref: ActorRef): Unit = {
+      logs = logs :+ ((term, entry, ref))
     }
 
 
@@ -138,7 +139,7 @@ package object persistence {
 
     override def lastClusterConfigurationIndex: Option[Int] = ???
 
-    override def logsBetween(start: Int, stop: Int): Seq[Command] = logs.slice(start, stop).map { _._2 }
+    override def logsBetween(start: Int, stop: Int): Seq[(Command, ActorRef)] = logs.slice(start, stop).map( i => (i._2, i._3) )
 
     override def nextIndex: Int = logs.size
 

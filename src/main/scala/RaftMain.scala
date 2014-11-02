@@ -58,21 +58,21 @@ object RaftMain extends App {
 
     implicit val timeout: akka.util.Timeout = akka.util.Timeout(1 seconds)
     val r1 = raft1 ? ClientCommand(SetValue("a", 5))
-    r1.onComplete { println(_) }
+    r1.onComplete { t => println(s"the result coming back from the cluster: ${t}") }
 
     val r2 = raft2 ? ClientCommand(SetValue("a", 5))
-    r2.onComplete({ println(_)})
+    r2.onComplete({ t => println(s"the result coming back from the cluster: ${t}") })
 
     val r3 = raft3 ? ClientCommand(SetValue("a", 5))
-    r3.onComplete({ println(_)})
+    r3.onComplete({ t => println(s"the result coming back from the cluster: ${t}") })
 
 
     val r21 = raft1 ? ClientCommand(GetValue("a"))
-    r21.onComplete { println(_) }
+    r21.onComplete { t => println(s"the result coming back from the cluster: ${t}") }
     val r22 = raft2 ? ClientCommand(GetValue("a"))
-    r22.onComplete { println(_) }
+    r22.onComplete { t => println(s"the result coming back from the cluster: ${t}") }
     val r23 = raft3 ? ClientCommand(GetValue("a"))
-    r23.onComplete { println(_) }
+    r23.onComplete { t => println(s"the result coming back from the cluster: ${t}") }
 
 
     println("sleeping")

@@ -2,7 +2,7 @@ package raft.cluster
 
 
 import adfs.utils._
-import akka.actor.{FSM, Props}
+import akka.actor.{ActorRef, FSM, Props}
 import raft.persistence.Persistence
 import raft.statemachine.StateMachine
 
@@ -67,7 +67,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
   when(Follower, stateTimeout = 2 * electionTimeout) {
     case Event(a: AppendEntries[T], State(clusterConfiguration, commitIndex, lastApplied, _)) => {
-      val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) = a
+      val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(T, ActorRef)], leaderCommit: Option[Int]) = a
 
       if (term < currentTerm) {
         stay replying TermExpired(currentTerm)
@@ -133,7 +133,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
   when(Leader, stateTimeout = electionTimeout) {
     case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
       val ClientCommand(c) = t
-      persistence.appendLog(persistence.getCurrentTerm, c)
+      persistence.appendLog(persistence.getCurrentTerm, c, sender)
       stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
     }
 
@@ -183,7 +183,11 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         } {
           val start = commitIndex.getOrElse(-1)
           log.debug(s"leader committing log entries between ${start+1} ${stop+1}")
-          persistence.logsBetween(start + 1, stop + 1).zipWithIndex.foreach({ case (command, i) => stateMachine ! (i + start, command)})
+          persistence.logsBetween(start + 1, stop + 1).zipWithIndex.foreach({
+            case ((command, actorRef), i) =>
+              stateMachine.tell((i + start, command), actorRef)
+//              stateMachine ! (i + start, command)
+          })
         }
       }
 
@@ -276,15 +280,6 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         } else {
           stay
         }
-//        persistence.getVotedFor match {
-//          case None =>
-//            persistence.setVotedFor(candidateId)
-//            stay replying GrantVote(term)
-//          case Some(id) if (id == candidateId) =>
-//            stay replying GrantVote(term)
-//          case _ =>
-//            stay
-//        }
       } else {
         stay replying InconsistentLog(this.id)
       }

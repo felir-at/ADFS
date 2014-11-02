@@ -1,6 +1,6 @@
 package raft
 
-import akka.actor.ActorPath
+import akka.actor.{ActorRef, ActorPath}
 
 import scala.language.{higherKinds, postfixOps}
 import scala.util.Try
@@ -52,7 +52,7 @@ package object cluster {
   case class InconsistentLog(id: Int) extends RPC
 
   //
-  case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) extends RPC
+  case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(T, ActorRef)], leaderCommit: Option[Int]) extends RPC
   case class LogMatchesUntil(id: Int, matchIndex: Option[Int]) extends RPC
 
   // client side communication
