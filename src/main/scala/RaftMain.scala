@@ -2,10 +2,11 @@ import akka.actor.{ActorPath, ActorSystem, PoisonPill}
 import akka.cluster.Cluster
 import akka.pattern.ask
 import com.typesafe.config.ConfigFactory
-import raft.cluster.{ClientCommand, ClusterConfiguration, RaftActor}
+import raft.cluster.{ClientCommand, ClusterConfiguration, RaftActor, ReferToLeader}
 import raft.persistence.InMemoryPersistence
-import raft.statemachine.{GetValue, Command, KVStore, SetValue}
+import raft.statemachine._
 
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.language.postfixOps
@@ -57,22 +58,48 @@ object RaftMain extends App {
     Thread.sleep(3000)
 
     implicit val timeout: akka.util.Timeout = akka.util.Timeout(1 seconds)
-    val r1 = raft1 ? ClientCommand(SetValue("a", 5))
-    r1.onComplete { t => println(s"the result coming back from the cluster: ${t}") }
-
-    val r2 = raft2 ? ClientCommand(SetValue("a", 5))
-    r2.onComplete({ t => println(s"the result coming back from the cluster: ${t}") })
-
-    val r3 = raft3 ? ClientCommand(SetValue("a", 5))
-    r3.onComplete({ t => println(s"the result coming back from the cluster: ${t}") })
 
 
-    val r21 = raft1 ? ClientCommand(GetValue("a"))
-    r21.onComplete { t => println(s"the result coming back from the cluster: ${t}") }
-    val r22 = raft2 ? ClientCommand(GetValue("a"))
-    r22.onComplete { t => println(s"the result coming back from the cluster: ${t}") }
-    val r23 = raft3 ? ClientCommand(GetValue("a"))
-    r23.onComplete { t => println(s"the result coming back from the cluster: ${t}") }
+//    val r = raft1 ? ClientCommand(GetValue("a"))
+
+    val r = Await.result(raft1 ? ClientCommand(GetValue("a")), 1 seconds)
+
+    val leaderId = r match {
+      case ReferToLeader(id) => {
+        println(s"update leader to ${id}")
+        id
+      }
+      case OK(a) => 1
+      case OK => {
+        println("wtf")
+        1
+      }
+    }
+
+    val leaderPath = clusterConfigurationMap(leaderId)
+
+    system.actorSelection(leaderPath)
+
+
+
+    val r1 = system.actorSelection(leaderPath)  ? ClientCommand(SetValue("a", 5))
+    r1.onComplete { t => println(s"Setting 'a' -> 5\nthe result coming back from the cluster: ${t}") }
+
+    val r2 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("a"))
+    r2.onComplete { t => println(s"Getting 'a'\nthe result coming back from the cluster: ${t}") }
+
+    val r3 = system.actorSelection(leaderPath)  ? ClientCommand(SetValue("b", 10))
+    r3.onComplete { t => println(s"Setting 'b' -> 10\nthe result coming back from the cluster: ${t}") }
+
+    val r4 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("b"))
+    r4.onComplete { t => println(s"Getting 'b'\nthe result coming back from the cluster: ${t}") }
+
+    val r5 = system.actorSelection(leaderPath)  ? ClientCommand(DeleteValue("a"))
+    r5.onComplete { t => println(s"Deleting 'a'\nthe result coming back from the cluster: ${t}") }
+
+
+    val r6 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("a"))
+    r6.onComplete { t => println(s"Getting 'a'\nthe result coming back from the cluster: ${t}") }
 
 
     println("sleeping")
