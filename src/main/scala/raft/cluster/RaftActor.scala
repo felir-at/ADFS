@@ -84,7 +84,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
             stop <- leaderCommit
           } {
             // TODO: we should really do something with last applied
-            persistence.logsBetween(start, stop).foreach({ stateMachine ! _ })
+            persistence.logsBetween(start, stop).zipWithIndex.foreach({ case (command, i) => stateMachine ! (i + start, command) })
           }
           stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, lastApplied = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
@@ -137,7 +137,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
     }
 
-    case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndexes, matchIndex)) =>
+    case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndexes, matchIndex)) => {
       log.info("It's time to send a heartbeat!!!")
       for {
         (id, path) <- clusterConfiguration.currentConfig ++ clusterConfiguration.newConfig
@@ -159,6 +159,8 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         )
       }
       stay using l
+    }
+
     case Event(GrantVote(term), _) => {
       if (term > persistence.getCurrentTerm) {
         log.info("Received GrantVote for a term in the future, becoming Follower")
@@ -176,6 +178,13 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       val newNextIndex: Map[Int, Option[Int]] = nextIndex + (id -> _matchIndex.map({ i => i + 1}) )
       val newMatchIndex = matchIndex + (id -> _matchIndex)
       val newCommitIndex: Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
+      for {
+        stop <- newCommitIndex
+      } {
+        val start = commitIndex.getOrElse(0)
+        persistence.logsBetween(start, stop + 1).zipWithIndex.foreach({ case (command, i) => stateMachine ! (i + start, command)})
+      }
+
       stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, newNextIndex, newMatchIndex)
     }
 
