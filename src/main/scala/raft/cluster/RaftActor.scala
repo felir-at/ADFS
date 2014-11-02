@@ -66,7 +66,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
   startWith(stateName = Follower, stateData = State(clusterConfiguration))
 
   when(Follower, stateTimeout = 2 * electionTimeout) {
-    case Event(a: AppendEntries[T], State(clusterConfiguration, commitIndex, lastApplied, _)) => {
+    case Event(a: AppendEntries[T], State(clusterConfiguration, commitIndex, _)) => {
       val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(T, ActorRef)], leaderCommit: Option[Int]) = a
 
       if (term < currentTerm) {
@@ -86,7 +86,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
             // TODO: we should really do something with last applied
             persistence.logsBetween(start, stop).zipWithIndex.foreach({ case (command, i) => stateMachine ! (i + start, command) })
           }
-          stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, lastApplied = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
+          stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
           stay replying InconsistentLog(this.id)
         }
@@ -95,7 +95,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
     }
 
-    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(clusterConfiguration, commitIndex, lastApplied, _)) => {
+    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(clusterConfiguration, commitIndex, _)) => {
       if (term < currentTerm) {
         stay replying TermExpired(currentTerm)
       } else if (persistence.termMatches(lastLogIndex, lastLogIndex)) {
@@ -113,14 +113,14 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       } else stay
     }
 
-    case Event(StateTimeout, State(clusterConfiguration, commitIndex, lastApplied, leaderId)) => {
+    case Event(StateTimeout, State(clusterConfiguration, commitIndex, leaderId)) => {
       println("No heartbeat received since")
       goto(Candidate)
-        .using(CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, 0))
+        .using(CandidateState(clusterConfiguration, commitIndex, leaderId, 0))
       //          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
     }
 
-    case Event(t: ClientCommand[T], State(clusterConfiguration, commitIndex, lastApplied, leaderIdOpt)) => {
+    case Event(t: ClientCommand[T], State(clusterConfiguration, commitIndex, leaderIdOpt)) => {
       leaderIdOpt match {
         case None => stay replying WrongLeader
         case Some(leaderPath) => stay replying ReferToLeader(leaderPath)
@@ -131,13 +131,13 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
 
   when(Leader, stateTimeout = electionTimeout) {
-    case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+    case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       val ClientCommand(c) = t
       persistence.appendLog(persistence.getCurrentTerm, c, sender)
       stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
     }
 
-    case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndexes, matchIndex)) => {
+    case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, nextIndexes, matchIndex)) => {
       log.info("It's time to send a heartbeat!!!")
       for {
         (id, path) <- clusterConfiguration.currentConfig ++ clusterConfiguration.newConfig
@@ -171,7 +171,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       }
     }
 
-    case Event(l@LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+    case Event(l@LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       log.debug(s"${l} received")
       //TODO: verify if it's correct
       val newNextIndex: Map[Int, Option[Int]] = nextIndex + (id -> _matchIndex.map({ i => i + 1}) )
@@ -191,19 +191,19 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         }
       }
 
-      stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, newNextIndex, newMatchIndex)
+      stay using LeaderState(clusterConfiguration, newCommitIndex, newNextIndex, newMatchIndex)
     }
 
-    case Event(i@InconsistentLog(id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+    case Event(i@InconsistentLog(id), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       log.info(s"${i} received")
       val newIndex = nextIndex.getOrElse(id, None) match {
         case Some(index) if (index > 0) => Some(index - 1)
         case _ => None
       }
-      stay using LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex + (id -> newIndex), matchIndex)
+      stay using LeaderState(clusterConfiguration, commitIndex, nextIndex + (id -> newIndex), matchIndex)
     }
 
-    case Event(Join(_id), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
+    case Event(Join(_id), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
 
       for {
         (id, path) <- clusterConfiguration.currentConfig
@@ -213,7 +213,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       stay replying ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (id -> sender.path), None))
     }
 
-    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), LeaderState(clusterConfiguration, commitIndex, lastApplied, _, _)) => {
+    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), LeaderState(clusterConfiguration, commitIndex, _, _)) => {
       if (term < currentTerm) {
         // NOTE: § 5.1
         stay replying TermExpired(currentTerm)
@@ -243,13 +243,13 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       val numberOfVotes = s.numberOfVotes + 1
       if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
         // TODO: we have to correctly fill out nextIndex and matchIndex
-        goto(Leader) using LeaderState(s.clusterConfiguration, s.commitIndex, s.lastApplied, Map(), Map())
+        goto(Leader) using LeaderState(s.clusterConfiguration, s.commitIndex, Map(), Map())
       } else {
         stay using s.copy(numberOfVotes = numberOfVotes)
       }
     }
 
-    case Event(StateTimeout, CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, votes)) => {
+    case Event(StateTimeout, CandidateState(clusterConfiguration, commitIndex, leaderId, votes)) => {
       log.info(s"vote failed, only ${votes} votes")
       log.info("Candidate -> Candidate")
 
@@ -264,19 +264,19 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       self ! GrantVote(currentTerm)
 
 
-      goto(Candidate) using CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, 0)
+      goto(Candidate) using CandidateState(clusterConfiguration, commitIndex, leaderId, 0)
 
 
     }
 
-    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), CandidateState(clusterConfiguration, commitIndex, lastApplied, _, _)) => {
+    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), CandidateState(clusterConfiguration, commitIndex, _, _)) => {
       if (term < currentTerm) {
         // NOTE: § 5.1
         stay replying TermExpired(currentTerm)
       } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm) {
         if (term > currentTerm) {
           persistence.clearVotedFor()
-          goto(Follower) using State(clusterConfiguration, commitIndex, lastApplied, None)
+          goto(Follower) using State(clusterConfiguration, commitIndex, None)
         } else {
           stay
         }
@@ -292,7 +292,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
     case Follower -> Candidate =>
       log.info("transition: Follower -> Candidate")
       nextStateData match {
-        case CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, numberOfVotes) =>
+        case CandidateState(clusterConfiguration, commitIndex, leaderId, numberOfVotes) =>
           val currentTerm = persistence.incrementAndGetTerm
           for {
             (id, path) <- clusterConfiguration.currentConfig
@@ -304,10 +304,10 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
           log.info("voting for self")
           self ! GrantVote(currentTerm)
 
-        case s@LeaderState(_, _, _, _, _) =>
+        case s@LeaderState(_, _, _, _) =>
           log.error("invalid data in Candidate state: " + s)
 
-        case s@State(_, _, _, _) =>
+        case s@State(_, _, _) =>
           log.error("invalid data in Candidate state: " + s)
       }
 
@@ -334,7 +334,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       log.info("transition: Candidate -> Candidate")
 
       nextStateData match {
-        case CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, numberOfVotes) =>
+        case CandidateState(clusterConfiguration, commitIndex, leaderId, numberOfVotes) =>
           val currentTerm = persistence.incrementAndGetTerm
           for {
             (id, path) <- clusterConfiguration.currentConfig
@@ -345,10 +345,10 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
           }
           self ! GrantVote(currentTerm)
 
-        case s@LeaderState(_, _, _, _, _) =>
+        case s@LeaderState(_, _, _, _) =>
           log.error("invalid data in Candidate state: " + s)
 
-        case s@State(_, _, _, _) =>
+        case s@State(_, _, _) =>
           log.error("invalid data in Candidate state: " + s)
 
       }
