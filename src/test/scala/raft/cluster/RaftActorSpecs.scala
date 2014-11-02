@@ -1,8 +1,17 @@
-package raft.cluster
+package raft.cluster.test
 
-import akka.actor.{Address, RootActorPath}
+import akka.actor.{ActorSystem, Address, RootActorPath}
+import akka.testkit.{TestFSMRef, TestKit}
+import akka.util.Timeout
+import com.typesafe.config.ConfigFactory
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.{BeforeAndAfterAll, Matchers, WordSpecLike}
+import raft.cluster.{Follower, ClusterConfiguration, RaftActor}
+import raft.persistence.InMemoryPersistence
+import raft.statemachine.KVStore
+
+import scala.concurrent.duration._
+import scala.language.postfixOps
 
 /**
  * Created by kosii on 2014. 11. 01..
@@ -71,4 +80,34 @@ class RaftActorObjectSpecs extends WordSpecLike with Matchers with BeforeAndAfte
 
   }
 
+}
+
+class RaftActorSpecs(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures {
+  //  implicit val system = ActorSystem("MyActorSystem", ConfigFactory.load("test"))
+  def this() = this(ActorSystem("MyActorSystem", ConfigFactory.load("test")))
+
+
+  implicit val timeout = Timeout(3 seconds)
+
+  "A RaftActor" should {
+
+    "start in FollowerState" in {
+      val persistence = InMemoryPersistence()
+      val fakeActorPath = RootActorPath(Address("akka.tcp", "system"))
+      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1"), Map(), None)
+//      val props =
+      val actorRef = TestFSMRef(new RaftActor(1, clusterConfiguration, 1, persistence, classOf[KVStore]))
+      val actor = actorRef.underlyingActor
+
+      actor.stateName should be { Follower }
+
+
+
+    }
+  }
+
+
+  override def afterAll: Unit = {
+    TestKit.shutdownActorSystem(system)
+  }
 }
