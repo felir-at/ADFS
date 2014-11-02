@@ -117,7 +117,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       println("No heartbeat received since")
       goto(Candidate)
         .using(CandidateState(clusterConfiguration, commitIndex, lastApplied, leaderId, 0))
-      //          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
+      //          .forMax(electionTimeout)
     }
 
     case Event(t: ClientCommand[T], State(clusterConfiguration, commitIndex, lastApplied, leaderIdOpt)) => {
@@ -222,7 +222,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
   }
 
-  when(Candidate, stateTimeout = NormalDistribution.nextGaussian(500, 40) millis) {
+  when(Candidate, stateTimeout = electionTimeout) {
     case Event(GrantVote(term), s: CandidateState) => {
       // TODO: maybe we should check the term?
       val numberOfVotes = s.numberOfVotes + 1
