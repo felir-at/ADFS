@@ -1,16 +1,14 @@
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration._
-import scala.language.postfixOps
-
 import akka.actor.{ActorPath, ActorSystem, PoisonPill}
 import akka.cluster.Cluster
 import akka.pattern.ask
 import com.typesafe.config.ConfigFactory
-
-
-import raft.cluster.{ClientCommand, RaftActor, ClusterConfiguration}
+import raft.cluster.{ClientCommand, ClusterConfiguration, RaftActor}
 import raft.persistence.InMemoryPersistence
-import raft.statemachine.{Command, GetValue, KVStore}
+import raft.statemachine.{GetValue, Command, KVStore, SetValue}
+
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
+import scala.language.postfixOps
 
 /**
  * Created by kosii on 2014. 10. 18..
@@ -59,14 +57,23 @@ object RaftMain extends App {
     Thread.sleep(3000)
 
     implicit val timeout: akka.util.Timeout = akka.util.Timeout(1 seconds)
-    val r1 = raft1 ? ClientCommand(GetValue("a"))
-    r1.onComplete({ println(_)})
+    val r1 = raft1 ? ClientCommand(SetValue("a", 5))
+    r1.onComplete { println(_) }
 
-    val r2 = raft2 ? ClientCommand(GetValue("a"))
+    val r2 = raft2 ? ClientCommand(SetValue("a", 5))
     r2.onComplete({ println(_)})
 
-    val r3 = raft3 ? ClientCommand(GetValue("a"))
+    val r3 = raft3 ? ClientCommand(SetValue("a", 5))
     r3.onComplete({ println(_)})
+
+
+    val r21 = raft1 ? ClientCommand(GetValue("a"))
+    r21.onComplete { println(_) }
+    val r22 = raft2 ? ClientCommand(GetValue("a"))
+    r22.onComplete { println(_) }
+    val r23 = raft3 ? ClientCommand(GetValue("a"))
+    r23.onComplete { println(_) }
+
 
     println("sleeping")
     Thread.sleep(30000)
