@@ -25,14 +25,12 @@ package object cluster {
   case class State(
     clusterConfiguration: ClusterConfiguration,
     commitIndex: Option[Int] = None,
-    lastApplied: Option[Int] = None,
     leaderId: Option[Int] = None
   ) extends Data
 
   case class CandidateState(
     clusterConfiguration: ClusterConfiguration,
     commitIndex: Option[Int],
-    lastApplied: Option[Int],
     leaderId: Option[Int],
     numberOfVotes: Int
   ) extends Data
@@ -40,7 +38,6 @@ package object cluster {
   case class LeaderState(
     clusterConfiguration: ClusterConfiguration,
     commitIndex: Option[Int],
-    lastApplied: Option[Int],
     nextIndex: Map[Int, Option[Int]],
     matchIndex: Map[Int, Option[Int]]
   ) extends Data
