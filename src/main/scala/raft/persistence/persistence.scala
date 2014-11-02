@@ -130,16 +130,10 @@ package object persistence {
     }
 
     override def termMatches(prevLogIndex: Option[Int], prevLogTerm: Option[Int]): Boolean = prevLogIndex match {
-      case None => {
-        println("its None, so returning true")
+      case None =>
         true
-      }
-      case Some(index) =>  {
-        val a = (prevLogTerm == getTerm(index))
-        println(s"${prevLogTerm} ${getTerm(index)}")
-        println(s"the result of the comparison is ${a}")
-        a
-      }
+      case Some(index) =>
+        prevLogTerm == getTerm(index)
     }
 
     override def lastClusterConfigurationIndex: Option[Int] = ???

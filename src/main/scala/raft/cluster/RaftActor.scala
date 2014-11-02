@@ -166,7 +166,6 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         log.info("Received GrantVote for a term in the future, becoming Follower")
         goto(Follower) using State(clusterConfiguration)
       } else {
-
         log.info(s"Yo, I'm already the boss, but thanks ${sender}")
         stay
       }
@@ -178,11 +177,14 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       val newNextIndex: Map[Int, Option[Int]] = nextIndex + (id -> _matchIndex.map({ i => i + 1}) )
       val newMatchIndex = matchIndex + (id -> _matchIndex)
       val newCommitIndex: Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
-      for {
-        stop <- newCommitIndex
-      } {
-        val start = commitIndex.getOrElse(0)
-        persistence.logsBetween(start, stop + 1).zipWithIndex.foreach({ case (command, i) => stateMachine ! (i + start, command)})
+      if (commitIndex != newCommitIndex) {
+        for {
+          stop <- newCommitIndex
+        } {
+          val start = commitIndex.getOrElse(-1)
+          log.debug(s"leader committing log entries between ${start+1} ${stop+1}")
+          persistence.logsBetween(start + 1, stop + 1).zipWithIndex.foreach({ case (command, i) => stateMachine ! (i + start, command)})
+        }
       }
 
       stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, newNextIndex, newMatchIndex)
