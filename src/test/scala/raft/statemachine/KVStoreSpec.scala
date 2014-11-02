@@ -1,26 +1,18 @@
 package raft.statemachine.test
 
 
-import org.scalatest.concurrent.ScalaFutures
-
-import scala.language.postfixOps
-
-import akka.util.Timeout
-import raft.{statemachine}
-import raft.statemachine._
-
-import collection.mutable.Stack
-
 import akka.actor.ActorSystem
 import akka.pattern.ask
-import akka.testkit.{TestKit, TestActorRef}
+import akka.testkit.{TestActorRef, TestKit}
+import akka.util.Timeout
 import com.typesafe.config.ConfigFactory
-import scala.concurrent.duration._
-import scala.concurrent.ExecutionContext.Implicits.global
-
 import org.scalatest._
+import org.scalatest.concurrent.ScalaFutures
+import raft.statemachine
+import raft.statemachine._
 
-import scala.util.{Success, Failure, Try}
+import scala.concurrent.duration._
+import scala.language.postfixOps
 
 
 class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures {
@@ -36,7 +28,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r = actorRef ? SetValue(0, "a", 5)
+      val r = actorRef ? SetValue("a", 5)
       whenReady(r) { value =>
         value should be { statemachine.OK }
       }
@@ -50,12 +42,12 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r1 = actorRef ? SetValue(0, "a", 5)
+      val r1 = actorRef ? SetValue("a", 5)
       whenReady(r1) { value =>
         value should be { statemachine.OK }
       }
 
-      val r2 = actorRef ? SetValue(1, "a", 5)
+      val r2 = actorRef ? SetValue("a", 5)
       whenReady(r2) { value =>
         value should be { statemachine.OK }
       }
@@ -106,7 +98,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
       assert(actor.lastApplied == None)
 
-      val r1 = actorRef ? SetValue(0, "a", 5)
+      val r1 = actorRef ? SetValue("a", 5)
       whenReady(r1) { value =>
         value should be { statemachine.OK }
       }
@@ -126,9 +118,9 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actor = actorRef.underlyingActor
 
       assert(actor.lastApplied == None)
-      val r1 = actorRef ? SetValue(1, "a", 5)
+      val r1 = actorRef ? SetValue("a", 5)
       whenReady(r1) { value =>
-        value should be { statemachine.RequestOutOfOrder }
+        value should be { None }
       }
 
       assert(actor.lastApplied == None)
@@ -140,7 +132,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
       assert(actor.lastApplied == None)
 
-      val r1 = actorRef ? SetValue(0, "a", 5)
+      val r1 = actorRef ? SetValue("a", 5)
 
       whenReady(r1) { value =>
         value should be { statemachine.OK }
@@ -154,7 +146,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       }
       assert(actor.lastApplied == Some(0))
 
-      val r3 = actorRef ? SetValue(1, "a", 10)
+      val r3 = actorRef ? SetValue("a", 10)
       whenReady(r3) { value =>
         value should be { statemachine.OK }
       }
@@ -176,7 +168,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
       assert(actor.lastApplied == None)
 
-      val r1  = actorRef ? DeleteValue(0, "a")
+      val r1  = actorRef ? DeleteValue("a")
       whenReady(r1) { value =>
         value should be { statemachine.OK }
       }
@@ -190,7 +182,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
       assert(actor.lastApplied == None)
 
-      val r1 = actorRef ? SetValue(0, "a", 5)
+      val r1 = actorRef ? SetValue("a", 5)
       whenReady(r1) { value =>
         value should be { statemachine.OK }
       }
@@ -204,7 +196,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
       assert(actor.lastApplied == Some(0))
 
-      val r3  = actorRef ? DeleteValue(1, "a")
+      val r3  = actorRef ? DeleteValue("a")
       whenReady(r3) { value =>
         value should be { statemachine.OK }
       }
@@ -221,9 +213,9 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
       assert(actor.lastApplied == None)
 
-      val r1 = actorRef ? DeleteValue(1, "a")
+      val r1 = actorRef ? DeleteValue("a")
       whenReady(r1) { value =>
-        value should be { statemachine.RequestOutOfOrder }
+        value should be { None }
       }
 
       assert(actor.lastApplied == None)
@@ -236,7 +228,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
       assert(actor.lastApplied == None)
 
-      val r1 = actorRef ? SetValue(0, "a", 5)
+      val r1 = actorRef ? SetValue("a", 5)
       whenReady(r1) { value =>
         value should be { statemachine.OK }
       }
@@ -251,7 +243,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       assert(actor.lastApplied == Some(0))
 
 
-      val r3 = actorRef ? SetValue(0, "a", 10)
+      val r3 = actorRef ? SetValue("a", 10)
       whenReady(r3) { value =>
         value should be { statemachine.OK }
       }
@@ -273,7 +265,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
       assert(actor.lastApplied == None)
 
-      val r1 = actorRef ? SetValue(0, "a", 5)
+      val r1 = actorRef ? SetValue("a", 5)
 
       whenReady(r1) { value =>
         value should be { statemachine.OK }
@@ -289,7 +281,7 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       assert(actor.lastApplied == Some(0))
 
 
-      val r3 = actorRef ? DeleteValue(0, "a")
+      val r3 = actorRef ? DeleteValue("a")
       whenReady(r3) { value =>
         value should be { statemachine.OK }
       }

@@ -2,7 +2,7 @@ package raft.cluster
 
 
 import adfs.utils._
-import akka.actor.{FSM, Props}
+import akka.actor.{ActorRef, FSM, Props}
 import raft.persistence.Persistence
 import raft.statemachine.StateMachine
 
@@ -67,7 +67,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
   when(Follower, stateTimeout = 2 * electionTimeout) {
     case Event(a: AppendEntries[T], State(clusterConfiguration, commitIndex, lastApplied, _)) => {
-      val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[T], leaderCommit: Option[Int]) = a
+      val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(T, ActorRef)], leaderCommit: Option[Int]) = a
 
       if (term < currentTerm) {
         stay replying TermExpired(currentTerm)
@@ -133,7 +133,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
   when(Leader, stateTimeout = electionTimeout) {
     case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
       val ClientCommand(c) = t
-      persistence.appendLog(persistence.getCurrentTerm, c)
+      persistence.appendLog(persistence.getCurrentTerm, c, sender)
       stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
     }
 
@@ -166,23 +166,29 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         log.info("Received GrantVote for a term in the future, becoming Follower")
         goto(Follower) using State(clusterConfiguration)
       } else {
-
         log.info(s"Yo, I'm already the boss, but thanks ${sender}")
         stay
       }
     }
 
     case Event(l@LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
-      log.info(s"${l} received")
+      log.debug(s"${l} received")
       //TODO: verify if it's correct
       val newNextIndex: Map[Int, Option[Int]] = nextIndex + (id -> _matchIndex.map({ i => i + 1}) )
       val newMatchIndex = matchIndex + (id -> _matchIndex)
       val newCommitIndex: Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
-      for {
-        stop <- newCommitIndex
-      } {
-        val start = commitIndex.getOrElse(0)
-        persistence.logsBetween(start, stop + 1).zipWithIndex.foreach({ case (command, i) => stateMachine ! (i + start, command)})
+      if (commitIndex != newCommitIndex) {
+        for {
+          stop <- newCommitIndex
+        } {
+          val start = commitIndex.getOrElse(-1)
+          log.debug(s"leader committing log entries between ${start+1} ${stop+1}")
+          persistence.logsBetween(start + 1, stop + 1).zipWithIndex.foreach({
+            case ((command, actorRef), i) =>
+              stateMachine.tell((i + start, command), actorRef)
+//              stateMachine ! (i + start, command)
+          })
+        }
       }
 
       stay using LeaderState(clusterConfiguration, newCommitIndex, lastApplied, newNextIndex, newMatchIndex)
@@ -274,15 +280,6 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         } else {
           stay
         }
-//        persistence.getVotedFor match {
-//          case None =>
-//            persistence.setVotedFor(candidateId)
-//            stay replying GrantVote(term)
-//          case Some(id) if (id == candidateId) =>
-//            stay replying GrantVote(term)
-//          case _ =>
-//            stay
-//        }
       } else {
         stay replying InconsistentLog(this.id)
       }
