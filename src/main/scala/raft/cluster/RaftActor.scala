@@ -173,7 +173,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
     }
 
     case Event(l@LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, lastApplied, nextIndex, matchIndex)) => {
-      log.info(s"${l} received")
+      log.debug(s"${l} received")
       //TODO: verify if it's correct
       val newNextIndex: Map[Int, Option[Int]] = nextIndex + (id -> _matchIndex.map({ i => i + 1}) )
       val newMatchIndex = matchIndex + (id -> _matchIndex)
