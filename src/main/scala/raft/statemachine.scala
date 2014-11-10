@@ -44,7 +44,7 @@ package object statemachine {
   sealed trait Response
   case object OK extends Response
   case class OK(value: Option[Int]) extends Response
-//  case object RequestOutOfOrder extends Response
+  case object RequestOutOfOrder extends Response
 
 
   class KVStore extends StateMachine[StateName, StateData] with LoggingFSM[StateName, StateData] {
@@ -53,11 +53,11 @@ package object statemachine {
     when (UniqueState) {
       // TODO: itt igazabol az indexek ellenorzesenel azt kell ellenorizni, hogy az elkuldott parancs a soronkovetkezo indexet tartalmazza-e
       // TODO: mivel a cluster management parancsok miatt lehetnek kimarado indexek, emiatt azt kell ellenorizni, hogy az indexek szigoruan monoton nonek-e
-
+      // TODO: de amugy az indexeket ebben a layerben nem kene mutatni.
 
       case Event((index: Int, SetValue(key, value)), Data(lastApplied, store)) => lastApplied match {
         case Some(lastIndex) if (lastIndex < index) =>
-          stay using (Data(Some(index), store + (key -> value))) replying OK
+          stay using Data(Some(index), store + (key -> value)) replying OK
         case None =>
           stay using Data(Some(index), store + (key -> value)) replying OK
         case _ =>
@@ -67,14 +67,21 @@ package object statemachine {
 
       case Event((index: Int, DeleteValue(key)), Data(lastApplied, store)) => lastApplied match {
         case Some(lastIndex) if (lastIndex < index) =>
-          stay using (Data(Some(index), store - key)) replying OK
+          stay using Data(Some(index), store - key) replying OK
         case None =>
-          stay using Data(Some(0), store - key) replying OK
+          stay using Data(Some(index), store - key) replying OK
         case _ =>
           stay replying OK
       }
-      case Event((index: Int, GetValue(key)), Data(lastApplied, store)) =>
-          stay using (Data(Some(index), store)) replying OK(store.lift(key))
+      case Event((index: Int, GetValue(key)), Data(lastApplied, store)) => lastApplied match {
+        case Some(lastIndex) if (lastIndex < index) =>
+          stay using Data(Some(index), store) replying OK(store.lift(key))
+        case None =>
+          stay using Data(Some(index), store) replying OK(store.lift(key))
+        case _ =>
+          stay replying RequestOutOfOrder
+      }
+//          stay using Data(Some(index), store) replying OK(store.lift(key))
     }
 
     override def lastApplied: Option[Int] = {
