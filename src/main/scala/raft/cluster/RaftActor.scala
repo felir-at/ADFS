@@ -67,7 +67,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
   when(Follower, stateTimeout = 2 * electionTimeout) {
     case Event(a: AppendEntries[T], State(clusterConfiguration, commitIndex, _)) => {
-      val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(T, ActorRef)], leaderCommit: Option[Int]) = a
+      val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(Either[ReconfigureCluster, T], ActorRef)], leaderCommit: Option[Int]) = a
 
       if (term < currentTerm) {
         stay replying TermExpired(currentTerm)
@@ -133,7 +133,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
   when(Leader, stateTimeout = electionTimeout) {
     case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       val ClientCommand(c) = t
-      persistence.appendLog(persistence.getCurrentTerm, c, sender)
+      persistence.appendLog(persistence.getCurrentTerm, Right(c), sender)
       stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
     }
 
