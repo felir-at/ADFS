@@ -27,6 +27,10 @@
 ###FLP impossibility theorem
 #Distributed filesystems
 
+#ADFS
+##Supported operations
+##Guarantees
+#Conclusion
 
 #Unsorted links
 
