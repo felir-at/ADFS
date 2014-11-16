@@ -79,12 +79,21 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         if (persistence.termMatches(prevLogIndex, prevLogTerm)) {
           persistence.appendLog(prevLogIndex, persistence.getCurrentTerm, entries)
           // TODO: check boundaries
+          // TODO: how can this work? start should be always None! this means that we never apply here?
           for {
             start <- commitIndex
             stop <- leaderCommit
           } {
             // TODO: we should really do something with last applied
-            persistence.logsBetween(start, stop).zipWithIndex.foreach({ case (command, i) => stateMachine ! (i + start, command) })
+            persistence.logsBetween(start, stop).zipWithIndex.foreach({
+              case ((Right(command), actorRef), i) => {
+                log.info("appying stuff to the statemachine in the follower")
+                stateMachine ! (i + start, command)
+              }
+              case ((Left(ReconfigureCluster(clusterConfiguration)), actorRef), i) => {
+                log.warning("We have to change change cluster configuration here!")
+              }
+            })
           }
           stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
@@ -96,6 +105,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
     }
 
     case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(clusterConfiguration, commitIndex, _)) => {
+      // TODO: check the terms
       if (term < currentTerm) {
         stay replying TermExpired(currentTerm)
       } else if (persistence.termMatches(lastLogIndex, lastLogIndex)) {
@@ -121,6 +131,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
     }
 
     case Event(t: ClientCommand[T], State(clusterConfiguration, commitIndex, leaderIdOpt)) => {
+      log.warning("I've just received a client command, but I'm no leader!")
       leaderIdOpt match {
         case None => stay replying WrongLeader
         case Some(leaderPath) => stay replying ReferToLeader(leaderPath)
@@ -158,6 +169,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
           persistence.logsBetween(nextIndex, persistence.nextIndex), commitIndex
         )
       }
+      log.info("we have sent so much heartbeat!!!")
       stay using l
     }
 
@@ -180,16 +192,21 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       if (commitIndex != newCommitIndex) {
         for {
           stop <- newCommitIndex
-        } {
-          val start = commitIndex.getOrElse(-1)
+          start <- commitIndex.orElse(Some(-1))
+        } yield {
+//          val start = commitIndex.getOrElse(-1)
           log.debug(s"leader committing log entries between ${start+1} ${stop+1}")
-          persistence.logsBetween(start + 1, stop + 1).zipWithIndex.foreach({
-            case ((command, actorRef), i) =>
+          persistence.logsBetween(start + 1, stop + 1).zipWithIndex.map({
+            case ((Right(command), actorRef), i) =>
               stateMachine.tell((i + start, command), actorRef)
-//              stateMachine ! (i + start, command)
+              None
+            case ((Left(ReconfigureCluster(clusterConfiguration)), actorRef), i) =>
+              Some(clusterConfiguration)
           })
         }
+
       }
+      
 
       stay using LeaderState(clusterConfiguration, newCommitIndex, newNextIndex, newMatchIndex)
     }
@@ -233,6 +250,16 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       } else {
         stay replying InconsistentLog(this.id)
       }
+    }
+
+    case Event(Leave(4), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
+
+      for {
+        (id, path) <- clusterConfiguration.currentConfig
+      } {
+        context.actorSelection(path) ! ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (id -> sender.path), None))
+      }
+      stay replying ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (id -> sender.path), None))
     }
 
   }
