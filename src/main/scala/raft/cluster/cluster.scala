@@ -22,7 +22,7 @@ package object cluster {
 
 
   sealed trait Data
-  case class State(
+  case class FollowerState(
     clusterConfiguration: ClusterConfiguration,
     commitIndex: Option[Int] = None,
     leaderId: Option[Int] = None

@@ -52,27 +52,32 @@ object RaftActor {
 
 /**
  *
- * @param clusterConfiguration contains the complete list of the cluster members (including self)
+ * @param _clusterConfiguration contains the complete list of the cluster members (including self)
  * @param replicationFactor
  */
 
-class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends FSM[Role, Data] {
+class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends FSM[Role, Data] {
 
   def electionTimeout = NormalDistribution.nextGaussian(500, 40) milliseconds
-  def currentTerm = persistence.getCurrentTerm
+//  def currentTerm = persistence.getCurrentTerm
 
   val stateMachine = context.actorOf(Props(clazz, args: _*))
 
-  startWith(stateName = Follower, stateData = State(clusterConfiguration))
+  startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration))
+
+  def isStale(term: Int): Boolean = term < persistence.getCurrentTerm
+  def isCurrent(term: Int): Boolean = term == persistence.getCurrentTerm
+  def isNew(term: Int): Boolean = persistence.getCurrentTerm < term
+
 
   when(Follower, stateTimeout = 2 * electionTimeout) {
-    case Event(a: AppendEntries[T], State(clusterConfiguration, commitIndex, _)) => {
+    case Event(a: AppendEntries[T], FollowerState(clusterConfiguration, commitIndex, _)) => {
       val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(Either[ReconfigureCluster, T], ActorRef)], leaderCommit: Option[Int]) = a
 
-      if (term < currentTerm) {
-        stay replying TermExpired(currentTerm)
+      if (isStale(term)) {
+        stay replying TermExpired(persistence.getCurrentTerm)
       } else {
-        if (term > currentTerm) {
+        if (isNew(term)) {
           persistence.setCurrentTerm(term)
           persistence.clearVotedFor()
         }
@@ -81,11 +86,11 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
           // TODO: check boundaries
           // TODO: how can this work? start should be always None! this means that we never apply here?
           for {
-            start <- commitIndex
+            start <- commitIndex.orElse(Some(-1))
             stop <- leaderCommit
           } {
             // TODO: we should really do something with last applied
-            persistence.logsBetween(start, stop).zipWithIndex.foreach({
+            persistence.logsBetween(start + 1, stop + 1).zipWithIndex.foreach({
               case ((Right(command), actorRef), i) => {
                 log.info("appying stuff to the statemachine in the follower")
                 stateMachine ! (i + start, command)
@@ -95,7 +100,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
               }
             })
           }
-          stay using State(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
+          stay using FollowerState(clusterConfiguration = clusterConfiguration, commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
           stay replying InconsistentLog(this.id)
         }
@@ -104,10 +109,10 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
     }
 
-    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), State(clusterConfiguration, commitIndex, _)) => {
+    case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), FollowerState(clusterConfiguration, commitIndex, _)) => {
       // TODO: check the terms
-      if (term < currentTerm) {
-        stay replying TermExpired(currentTerm)
+      if (isStale(term)) {
+        stay replying TermExpired(persistence.getCurrentTerm)
       } else if (persistence.termMatches(lastLogIndex, lastLogIndex)) {
         persistence.getVotedFor match {
           case None =>
@@ -123,14 +128,14 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       } else stay
     }
 
-    case Event(StateTimeout, State(clusterConfiguration, commitIndex, leaderId)) => {
+    case Event(StateTimeout, FollowerState(clusterConfiguration, commitIndex, leaderId)) => {
       println("No heartbeat received since")
       goto(Candidate)
         .using(CandidateState(clusterConfiguration, commitIndex, leaderId, 0))
       //          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
     }
 
-    case Event(t: ClientCommand[T], State(clusterConfiguration, commitIndex, leaderIdOpt)) => {
+    case Event(t: ClientCommand[T], FollowerState(clusterConfiguration, commitIndex, leaderIdOpt)) => {
       log.warning("I've just received a client command, but I'm no leader!")
       leaderIdOpt match {
         case None => stay replying WrongLeader
@@ -165,7 +170,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         log.info(s"follower ${id}'s nextIndex: ${nextIndex}")
         log.info("sending data with the heartbeat: " + persistence.logsBetween(nextIndex, persistence.nextIndex))
         context.actorSelection(path) ! AppendEntries(
-          currentTerm, this.id, prevLogIndex, prevLogIndex.flatMap(persistence.getTerm(_)),
+          persistence.getCurrentTerm, this.id, prevLogIndex, prevLogIndex.flatMap(persistence.getTerm(_)),
           persistence.logsBetween(nextIndex, persistence.nextIndex), commitIndex
         )
       }
@@ -173,10 +178,10 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       stay using l
     }
 
-    case Event(GrantVote(term), _) => {
+    case Event(GrantVote(term), l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       if (term > persistence.getCurrentTerm) {
         log.info("Received GrantVote for a term in the future, becoming Follower")
-        goto(Follower) using State(clusterConfiguration)
+        goto(Follower) using FollowerState(clusterConfiguration)
       } else {
         log.info(s"Yo, I'm already the boss, but thanks ${sender}")
         stay
@@ -231,11 +236,11 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
     }
 
     case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), LeaderState(clusterConfiguration, commitIndex, _, _)) => {
-      if (term < currentTerm) {
+      if (isStale(term)) {
         // NOTE: § 5.1
-        stay replying TermExpired(currentTerm)
+        stay replying TermExpired(persistence.getCurrentTerm)
       } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm) {
-        if (term > currentTerm) {
+        if (isNew(term)) {
           persistence.clearVotedFor()
         }
         persistence.getVotedFor match {
@@ -268,7 +273,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
     case Event(GrantVote(term), s: CandidateState) => {
       // TODO: maybe we should check the term?
       val numberOfVotes = s.numberOfVotes + 1
-      if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
+      if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(s.clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
         // TODO: we have to correctly fill out nextIndex and matchIndex
         goto(Leader) using LeaderState(s.clusterConfiguration, s.commitIndex, Map(), Map())
       } else {
@@ -296,20 +301,31 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
 
     }
 
+
     case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), CandidateState(clusterConfiguration, commitIndex, _, _)) => {
-      if (term < currentTerm) {
+      if (isStale(term)) {
         // NOTE: § 5.1
-        stay replying TermExpired(currentTerm)
+        stay replying TermExpired(persistence.getCurrentTerm)
       } else if (persistence.lastLogIndex == lastLogIndex && persistence.lastLogTerm == lastLogTerm) {
-        if (term > currentTerm) {
+        if (isNew(term)) {
           persistence.clearVotedFor()
-          goto(Follower) using State(clusterConfiguration, commitIndex, None)
+          goto(Follower) using FollowerState(clusterConfiguration, commitIndex, None)
         } else {
           stay
         }
       } else {
         stay replying InconsistentLog(this.id)
       }
+    }
+  }
+
+  def doThisUnlessTermExpired(term:Int)(currentTerm: =>State)(newTerm: =>State = goto(Follower)): State = {
+    if (isStale(term)) {
+      stay replying TermExpired(persistence.getCurrentTerm)
+    } else if (isCurrent(term)) {
+      currentTerm
+    } else {
+      newTerm
     }
   }
 
@@ -334,7 +350,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         case s@LeaderState(_, _, _, _) =>
           log.error("invalid data in Candidate state: " + s)
 
-        case s@State(_, _, _) =>
+        case s@FollowerState(_, _, _) =>
           log.error("invalid data in Candidate state: " + s)
       }
 
@@ -377,7 +393,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
         case s@LeaderState(_, _, _, _) =>
           log.error("invalid data in Candidate state: " + s)
 
-        case s@State(_, _, _) =>
+        case s@FollowerState(_, _, _) =>
           log.error("invalid data in Candidate state: " + s)
 
       }
