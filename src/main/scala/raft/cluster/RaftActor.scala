@@ -141,14 +141,14 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
   }
 
 
-  when(Leader, stateTimeout = electionTimeout) {
+  when(Leader) {
     case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       val ClientCommand(c) = t
       persistence.appendLog(persistence.getCurrentTerm, Right(c), sender)
       stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
     }
 
-    case Event(StateTimeout, l@LeaderState(clusterConfiguration, commitIndex, nextIndexes, matchIndex)) => {
+    case Event(Tick, l@LeaderState(clusterConfiguration, commitIndex, nextIndexes, matchIndex)) => {
       log.info("It's time to send a heartbeat!!!")
       for {
         (id, path) <- clusterConfiguration.currentConfig ++ clusterConfiguration.newConfig
@@ -339,6 +339,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
       }
 
     case Candidate -> Leader => {
+      setTimer("heartbeat", Tick, electionTimeout, true)
       log.info("transition: Candidate -> Leader")
 
     }
@@ -349,6 +350,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: Cl
     }
 
     case Leader -> Follower => {
+      cancelTimer("heartbeat")
       log.info("transition: Leader -> Follower")
 
     }

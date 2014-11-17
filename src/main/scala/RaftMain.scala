@@ -92,35 +92,35 @@ object RaftMain extends App {
       println(s"Setting 'a' -> 5\nthe result coming back from the cluster: ${t}")
     }
 
-//    Thread.sleep(100)
+    Thread.sleep(100)
 
     val r2 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("a"))
     r2.onComplete { t =>
 //      assert(t == Success(Some(5)))
       println(s"Getting 'a'\nthe result coming back from the cluster: ${t}")
     }
-//    Thread.sleep(100)
+    Thread.sleep(100)
 
     val r3 = system.actorSelection(leaderPath)  ? ClientCommand(SetValue("b", 10))
     r3.onComplete { t =>
 //      assert(t == Success(OK))
       println(s"Setting 'b' -> 10\nthe result coming back from the cluster: ${t}")
     }
-//    Thread.sleep(100)
+    Thread.sleep(100)
 
     val r4 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("b"))
     r4.onComplete { t =>
 //      assert(t == Success(Some(10)))
       println(s"Getting 'b'\nthe result coming back from the cluster: ${t}")
     }
-//    Thread.sleep(100)
+    Thread.sleep(100)
 
     val r5 = system.actorSelection(leaderPath)  ? ClientCommand(DeleteValue("a"))
     r5.onComplete { t =>
 //      assert(t == Success(OK))
       println(s"Deleting 'a'\nthe result coming back from the cluster: ${t}")
     }
-//    Thread.sleep(100)
+    Thread.sleep(100)
 
 
     val r6 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("a"))

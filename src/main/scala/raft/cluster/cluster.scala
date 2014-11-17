@@ -74,7 +74,7 @@ package object cluster {
   case class Leave(id: Int) extends RPC
   case class ReconfigureCluster(clusterConfiguration: ClusterConfiguration) extends RPC
 
-
+  case object Tick
 
 
 }
