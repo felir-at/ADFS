@@ -82,11 +82,14 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
           persistence.clearVotedFor()
         }
         if (persistence.termMatches(prevLogIndex, prevLogTerm)) {
+
+          // TODO: it's broken if there is interleaving cluster reconfiguration requests
+
           persistence.appendLog(prevLogIndex, persistence.getCurrentTerm, entries)
-          val mixedentries.filter(_._1.isLeft).lastOption
-          // TODO: check boundaries
-          // TODO: how can this work? start should be always None! this means that we never apply here?
-          val subsequentClusterConfiturations: Option[Seq[Option[ClusterConfiguration]]] = for {
+
+          val clusterConfigurationsToAppend = entries.filter(_._1.isLeft)
+
+          val clusterConfigurationsToApply: Option[Seq[Option[ClusterConfiguration]]] = for {
             start <- commitIndex.orElse(Some(-1))
             stop <- leaderCommit
           } yield {
@@ -103,8 +106,10 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
               }
             })
           }
-          //TODO: what happens if we can have multiple cluster reconfiguration in the same time?
-          val nextClusterConfiguration = subsequentClusterConfiturations flatMap (_.filter(_!=None).last)
+          // TODO: what happens if we can have multiple cluster reconfiguration in the same time?
+          val nextClusterConfiguration = clusterConfigurationsToApply flatMap (_.filter(_!=None).last)
+
+
           stay using FollowerState(clusterConfiguration = nextClusterConfiguration.getOrElse(clusterConfiguration), commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
           stay replying InconsistentLog(this.id)

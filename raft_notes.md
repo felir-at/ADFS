@@ -30,3 +30,8 @@ it replicates the first entry having its current term to a majority of
 the cluster.)](https://groups.google.com/forum/#!topic/raft-dev/KIozjYuq5m0)
 
 But when a leader get elected, it also means that the log entries match up until leader's lastLogIndex (because of the election safety property).
+
+####What happens in case of overlapping cluster changes?
+
+Suppose that there is two client wanting to join the cluster.
+
