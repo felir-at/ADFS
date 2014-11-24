@@ -18,7 +18,7 @@ package object cluster {
   case object Follower extends Role
   case object Candidate extends Role
 
-  case class ClusterConfiguration(currentConfig: Map[Int, ActorPath], newConfig: Map[Int, ActorPath], i: Option[Int])
+  case class ClusterConfiguration(currentConfig: Map[Int, ActorPath], newConfig: Option[Map[Int, ActorPath]])
 
 
   sealed trait Data
@@ -72,6 +72,7 @@ package object cluster {
   // cluster management
   case class Join(id: Int) extends RPC
   case class Leave(id: Int) extends RPC
+  case object AlreadyInTransition extends RPC
   case class ReconfigureCluster(clusterConfiguration: ClusterConfiguration) extends RPC
 
   case object Tick

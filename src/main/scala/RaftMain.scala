@@ -31,7 +31,7 @@ object RaftMain extends App {
     3 -> ActorPath.fromString("akka://system/user/3")
   )
 
-  val clusterConfiguration = ClusterConfiguration(clusterConfigurationMap, Map(), None)
+  val clusterConfiguration = ClusterConfiguration(clusterConfigurationMap, None)
 
 
   implicit val timeout: akka.util.Timeout = akka.util.Timeout(10 seconds)

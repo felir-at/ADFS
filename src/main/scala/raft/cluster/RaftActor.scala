@@ -19,7 +19,7 @@ object RaftActor {
     Props(classOf[RaftActor[T, D, M]], id, clusterConfiguration, minQuorumSize, persistence, clazz, args)
   }
 
-
+  // the commit index is the lower median of the matchIndexes
   def determineCommitIndex(clusterConfiguration: ClusterConfiguration, matchIndex: Map[Int, Option[Int]]): Option[Int] = {
 
     // we take the median of the sorted
@@ -30,7 +30,7 @@ object RaftActor {
     )
 
     val newMatchIndexMedian = median(
-      clusterConfiguration.newConfig.map(
+      clusterConfiguration.newConfig.getOrElse(Map()).map(
         i => matchIndex.getOrElse(i._1, None)
       ).toVector.sorted
     )
@@ -166,7 +166,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
     case Event(Tick, l@LeaderState(clusterConfiguration, commitIndex, nextIndexes, matchIndex)) => {
       log.info("It's time to send a heartbeat!!!")
       for {
-        (id, path) <- clusterConfiguration.currentConfig ++ clusterConfiguration.newConfig
+        (id, path) <- clusterConfiguration.currentConfig ++ clusterConfiguration.newConfig.getOrElse(Map())
         if (id != this.id)
       } {
         val prevLogIndex = nextIndexes.getOrElse(id, None) match {
@@ -235,16 +235,6 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
       stay using LeaderState(clusterConfiguration, commitIndex, nextIndex + (id -> newIndex), matchIndex)
     }
 
-    case Event(Join(_id), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
-
-      for {
-        (id, path) <- clusterConfiguration.currentConfig
-      } {
-        context.actorSelection(path) ! ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (_id -> sender.path), None))
-      }
-      stay replying ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (id -> sender.path), None))
-    }
-
     case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), LeaderState(clusterConfiguration, commitIndex, _, _)) => {
       if (isStale(term)) {
         // NOTE: § 5.1
@@ -267,14 +257,37 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
       }
     }
 
-    case Event(Leave(4), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
+    case Event(Join(_id), l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => clusterConfiguration.newConfig match {
+      case None =>
+        val updatedClusterConfiguration = ClusterConfiguration(clusterConfiguration.currentConfig, Some(clusterConfiguration.currentConfig + (_id -> sender.path)))
+        for {
+          (id, path) <- clusterConfiguration.currentConfig
+          if (id != this.id)
+        } {
+          context.actorSelection(path) ! ReconfigureCluster(updatedClusterConfiguration)
+        }
+        stay using l.copy(clusterConfiguration = updatedClusterConfiguration)
 
-      for {
-        (id, path) <- clusterConfiguration.currentConfig
-      } {
-        context.actorSelection(path) ! ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (id -> sender.path), None))
-      }
-      stay replying ReconfigureCluster(ClusterConfiguration(clusterConfiguration.currentConfig, clusterConfiguration.currentConfig + (id -> sender.path), None))
+      case Some(newConfig) =>
+        stay replying AlreadyInTransition
+
+    }
+
+
+    case Event(Leave(_id), l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => clusterConfiguration.newConfig match {
+      case None =>
+        val updatedClusterConfiguration = ClusterConfiguration(clusterConfiguration.currentConfig, Some(clusterConfiguration.currentConfig - _id))
+        for {
+          (id, path) <- clusterConfiguration.currentConfig
+          if (id != this.id)
+        } {
+          context.actorSelection(path) ! ReconfigureCluster(updatedClusterConfiguration)
+        }
+        stay using l.copy(clusterConfiguration = updatedClusterConfiguration)
+
+      case Some(newConfig) =>
+        stay replying AlreadyInTransition
+
     }
 
   }
