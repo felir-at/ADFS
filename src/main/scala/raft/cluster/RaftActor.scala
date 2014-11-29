@@ -87,9 +87,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
 
           persistence.appendLog(prevLogIndex, persistence.getCurrentTerm, entries)
 
-          val clusterConfigurationsToAppend = entries.filter(_._1.isLeft)
-
-          val clusterConfigurationsToApply: Option[Seq[Option[ClusterConfiguration]]] = for {
+        for {
             start <- commitIndex.orElse(Some(-1))
             stop <- leaderCommit
           } yield {
@@ -98,19 +96,27 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
               case ((Right(command), actorRef), i) => {
                 log.info("appying stuff to the statemachine in the follower")
                 stateMachine ! (i + start, command)
-                None
               }
-              case ((Left(ReconfigureCluster(clusterConfiguration)), actorRef), i) => {
-                log.warning("We have to change change cluster configuration here!")
-                Some(clusterConfiguration)
+              case ((Left(ReconfigureCluster(_clusterConfiguration)), actorRef), i) => {
+                log.info("committing changes in cluster configuration")
+                _clusterConfiguration match {
+                  case ClusterConfiguration(clusterMap, None) =>
+                    if (!clusterMap.contains(id)) {
+                      log.info(s"Follower ${id} not a member of the cluster anymore, stepping down")
+                      stop
+                    }
+                  case _ =>
+                }
               }
             })
           }
-          // TODO: what happens if we can have multiple cluster reconfiguration in the same time?
-          val nextClusterConfiguration = clusterConfigurationsToApply flatMap (_.filter(_!=None).last)
 
+          val clusterConfigurationsToApply: Option[ClusterConfiguration] = entries.filter(_._1.isLeft).map(_._1.left.get.clusterConfiguration).lastOption
+          clusterConfigurationsToApply foreach { l =>
+            log.info(s"changing clusterConfiguration from ${clusterConfiguration} to ${l}!")
+          }
 
-          stay using FollowerState(clusterConfiguration = nextClusterConfiguration.getOrElse(clusterConfiguration), commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
+          stay using FollowerState(clusterConfiguration = clusterConfigurationsToApply.getOrElse(clusterConfiguration), commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
           stay replying InconsistentLog(this.id)
         }
@@ -198,11 +204,11 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
       }
     }
 
-    case Event(l@LogMatchesUntil(id, _matchIndex), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
+    case Event(l@LogMatchesUntil(peerId, _matchIndex), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       log.debug(s"${l} received")
       //TODO: verify if it's correct
-      val newNextIndex: Map[Int, Option[Int]] = nextIndex + (id -> _matchIndex.map({ i => i + 1}) )
-      val newMatchIndex = matchIndex + (id -> _matchIndex)
+      val newNextIndex: Map[Int, Option[Int]] = nextIndex + (peerId -> _matchIndex.map({ i => i + 1}) )
+      val newMatchIndex = matchIndex + (peerId -> _matchIndex)
       val newCommitIndex: Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
       if (commitIndex != newCommitIndex) {
         for {
@@ -216,6 +222,17 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
               stateMachine.tell((i + start, command), actorRef)
               None
             case ((Left(ReconfigureCluster(clusterConfiguration)), actorRef), i) =>
+              // when we commit a reconfiguration, we should either create a new ReconfigureCluster message, either apply the final result of the reconfiguration
+              clusterConfiguration match {
+                case ClusterConfiguration(currentConfiguration, None) =>
+                  if (!currentConfiguration.contains(id)) {
+                    // if we are not anymore in the cluster
+                    stop
+                  }
+                case ClusterConfiguration(currentConfiguration, Some(newConfiguration)) =>
+                  val updatedClusterConfiguration  = ClusterConfiguration(newConfiguration, None)
+                  persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), self)
+              }
               Some(clusterConfiguration)
           })
         }
@@ -257,15 +274,11 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
       }
     }
 
-    case Event(Join(_id), l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => clusterConfiguration.newConfig match {
+    case Event(Join(peerId, actorPath), l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => clusterConfiguration.newConfig match {
       case None =>
-        val updatedClusterConfiguration = ClusterConfiguration(clusterConfiguration.currentConfig, Some(clusterConfiguration.currentConfig + (_id -> sender.path)))
-        for {
-          (id, path) <- clusterConfiguration.currentConfig
-          if (id != this.id)
-        } {
-          context.actorSelection(path) ! ReconfigureCluster(updatedClusterConfiguration)
-        }
+        val updatedClusterConfiguration = ClusterConfiguration(clusterConfiguration.currentConfig, Some(clusterConfiguration.currentConfig + (peerId -> actorPath)))
+        // we send back sender, so sender get alerted when the transition is ready
+        persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), sender())
         stay using l.copy(clusterConfiguration = updatedClusterConfiguration)
 
       case Some(newConfig) =>
@@ -277,12 +290,8 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
     case Event(Leave(_id), l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => clusterConfiguration.newConfig match {
       case None =>
         val updatedClusterConfiguration = ClusterConfiguration(clusterConfiguration.currentConfig, Some(clusterConfiguration.currentConfig - _id))
-        for {
-          (id, path) <- clusterConfiguration.currentConfig
-          if (id != this.id)
-        } {
-          context.actorSelection(path) ! ReconfigureCluster(updatedClusterConfiguration)
-        }
+        // we send back sender, so sender get alerted when the transition is ready
+        persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), sender())
         stay using l.copy(clusterConfiguration = updatedClusterConfiguration)
 
       case Some(newConfig) =>

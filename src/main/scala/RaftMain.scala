@@ -2,7 +2,7 @@ import akka.actor.{ActorPath, ActorSystem, PoisonPill}
 import akka.cluster.Cluster
 import akka.pattern.ask
 import com.typesafe.config.ConfigFactory
-import raft.cluster.{ClientCommand, ClusterConfiguration, RaftActor, ReferToLeader}
+import raft.cluster._
 import raft.persistence.InMemoryPersistence
 import raft.statemachine._
 
@@ -129,11 +129,23 @@ object RaftMain extends App {
       println(s"Getting 'a'\nthe result coming back from the cluster: ${t}")
     }
 
+    println("sleeping before joing")
+
+    Thread.sleep(1000)
+
+    println("initiate join")
+    val persistence4 = InMemoryPersistence()
+    val raft4 = system.actorOf(
+      RaftActor.props(
+        4, clusterConfiguration, 4, persistence4, classOf[KVStore]
+      ),
+      "4")
+    system.actorSelection(leaderPath) ! Join(4, raft4.path)
 
     println("sleeping")
-    Thread.sleep(30000)
+    Thread.sleep(3000)
     println("end sleeping")
-
+    system.shutdown()
     println("killing raft1")
     raft1 ! PoisonPill
 

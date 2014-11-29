@@ -8,7 +8,8 @@ package object statemachine {
 
 
   // TODO: valahogy meg kell csinalni, hogy az automatikusan ide erkezo uzenetek be legyenek csomagolva egy ClientCommand wrappre classba
-  //    es az innen elkuldott cuccok pedig egy ClientResponse wrapper classba, anelkul, hogy a traitet implementalo user errol barmit tudna
+  //    es az innen elkuldott cuccok pedig egy ClientResponse wrapper classba, anelkul, hogy a traitet implementalo user errol barmit tudna,
+  //    ezzel elkerulhetnenk az ilyen hibakat: unhandled event OK(Some(5)) in state Follower
 
 
 
@@ -53,7 +54,7 @@ package object statemachine {
     when (UniqueState) {
       // TODO: itt igazabol az indexek ellenorzesenel azt kell ellenorizni, hogy az elkuldott parancs a soronkovetkezo indexet tartalmazza-e
       // TODO: mivel a cluster management parancsok miatt lehetnek kimarado indexek, emiatt azt kell ellenorizni, hogy az indexek szigoruan monoton nonek-e
-      // TODO: de amugy az indexeket ebben a layerben nem kene mutatni.
+      // TODO: de amugy az indexeket ebben a layerben nem kene mutatni (trello: http://goo.gl/SJ6gzL)
 
       case Event((index: Int, SetValue(key, value)), Data(lastApplied, store)) => lastApplied match {
         case Some(lastIndex) if (lastIndex < index) =>

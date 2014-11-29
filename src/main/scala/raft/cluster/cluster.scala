@@ -70,7 +70,7 @@ package object cluster {
   case class GrantVote(term: Int) extends RPC
 
   // cluster management
-  case class Join(id: Int) extends RPC
+  case class Join(id: Int, actorPath: ActorPath) extends RPC
   case class Leave(id: Int) extends RPC
   case object AlreadyInTransition extends RPC
   case class ReconfigureCluster(clusterConfiguration: ClusterConfiguration) extends RPC
