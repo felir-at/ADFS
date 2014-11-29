@@ -2,7 +2,7 @@ import akka.actor.{ActorPath, ActorSystem, PoisonPill}
 import akka.cluster.Cluster
 import akka.pattern.ask
 import com.typesafe.config.ConfigFactory
-import raft.cluster.{ClientCommand, ClusterConfiguration, RaftActor, ReferToLeader}
+import raft.cluster._
 import raft.persistence.InMemoryPersistence
 import raft.statemachine._
 
@@ -16,7 +16,7 @@ import scala.language.postfixOps
  */
 object RaftMain extends App {
 
-  val commonConfig = ConfigFactory.load()
+  val commonConfig = ConfigFactory.load("application")
 
   val system = ActorSystem("system", adfs.utils.remoteConfig("127.0.0.1", 2551, commonConfig))
 
@@ -31,8 +31,10 @@ object RaftMain extends App {
     3 -> ActorPath.fromString("akka://system/user/3")
   )
 
-  val clusterConfiguration = ClusterConfiguration(clusterConfigurationMap, Map(), None)
+  val clusterConfiguration = ClusterConfiguration(clusterConfigurationMap, None)
 
+
+  implicit val timeout: akka.util.Timeout = akka.util.Timeout(10 seconds)
 
   Cluster(system).registerOnMemberUp {
 
@@ -57,7 +59,6 @@ object RaftMain extends App {
 
     Thread.sleep(3000)
 
-    implicit val timeout: akka.util.Timeout = akka.util.Timeout(1 seconds)
 
 
 //    val r = raft1 ? ClientCommand(GetValue("a"))
@@ -69,7 +70,10 @@ object RaftMain extends App {
         println(s"update leader to ${id}")
         id
       }
-      case OK(a) => 1
+      case OK(a) => {
+        s"update leader to 1"
+        1
+      }
       case OK => {
         println("wtf")
         1
@@ -83,29 +87,65 @@ object RaftMain extends App {
 
 
     val r1 = system.actorSelection(leaderPath)  ? ClientCommand(SetValue("a", 5))
-    r1.onComplete { t => println(s"Setting 'a' -> 5\nthe result coming back from the cluster: ${t}") }
+    r1.onComplete { t =>
+//      assert(t == Success(OK))
+      println(s"Setting 'a' -> 5\nthe result coming back from the cluster: ${t}")
+    }
+
+    Thread.sleep(100)
 
     val r2 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("a"))
-    r2.onComplete { t => println(s"Getting 'a'\nthe result coming back from the cluster: ${t}") }
+    r2.onComplete { t =>
+//      assert(t == Success(Some(5)))
+      println(s"Getting 'a'\nthe result coming back from the cluster: ${t}")
+    }
+    Thread.sleep(100)
 
     val r3 = system.actorSelection(leaderPath)  ? ClientCommand(SetValue("b", 10))
-    r3.onComplete { t => println(s"Setting 'b' -> 10\nthe result coming back from the cluster: ${t}") }
+    r3.onComplete { t =>
+//      assert(t == Success(OK))
+      println(s"Setting 'b' -> 10\nthe result coming back from the cluster: ${t}")
+    }
+    Thread.sleep(100)
 
     val r4 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("b"))
-    r4.onComplete { t => println(s"Getting 'b'\nthe result coming back from the cluster: ${t}") }
+    r4.onComplete { t =>
+//      assert(t == Success(Some(10)))
+      println(s"Getting 'b'\nthe result coming back from the cluster: ${t}")
+    }
+    Thread.sleep(100)
 
     val r5 = system.actorSelection(leaderPath)  ? ClientCommand(DeleteValue("a"))
-    r5.onComplete { t => println(s"Deleting 'a'\nthe result coming back from the cluster: ${t}") }
+    r5.onComplete { t =>
+//      assert(t == Success(OK))
+      println(s"Deleting 'a'\nthe result coming back from the cluster: ${t}")
+    }
+    Thread.sleep(100)
 
 
     val r6 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("a"))
-    r6.onComplete { t => println(s"Getting 'a'\nthe result coming back from the cluster: ${t}") }
+    r6.onComplete { t =>
+//      assert(t == Success(None))
+      println(s"Getting 'a'\nthe result coming back from the cluster: ${t}")
+    }
 
+    println("sleeping before joing")
+
+    Thread.sleep(1000)
+
+    println("initiate join")
+    val persistence4 = InMemoryPersistence()
+    val raft4 = system.actorOf(
+      RaftActor.props(
+        4, clusterConfiguration, 4, persistence4, classOf[KVStore]
+      ),
+      "4")
+    system.actorSelection(leaderPath) ! Join(4, raft4.path)
 
     println("sleeping")
-    Thread.sleep(30000)
+    Thread.sleep(3000)
     println("end sleeping")
-
+    system.shutdown()
     println("killing raft1")
     raft1 ! PoisonPill
 

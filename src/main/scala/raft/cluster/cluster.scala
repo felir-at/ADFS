@@ -18,11 +18,11 @@ package object cluster {
   case object Follower extends Role
   case object Candidate extends Role
 
-  case class ClusterConfiguration(currentConfig: Map[Int, ActorPath], newConfig: Map[Int, ActorPath], i: Option[Int])
+  case class ClusterConfiguration(currentConfig: Map[Int, ActorPath], newConfig: Option[Map[Int, ActorPath]])
 
 
   sealed trait Data
-  case class State(
+  case class FollowerState(
     clusterConfiguration: ClusterConfiguration,
     commitIndex: Option[Int] = None,
     leaderId: Option[Int] = None
@@ -49,7 +49,14 @@ package object cluster {
   case class InconsistentLog(id: Int) extends RPC
 
   //
-  case class AppendEntries[T](term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(T, ActorRef)], leaderCommit: Option[Int]) extends RPC
+  case class AppendEntries[T](
+    term: Int,
+    leaderId: Int,
+    prevLogIndex: Option[Int],
+    prevLogTerm: Option[Int],
+    entries: Seq[(Either[ReconfigureCluster, T], ActorRef)],
+    leaderCommit: Option[Int]
+  ) extends RPC
   case class LogMatchesUntil(id: Int, matchIndex: Option[Int]) extends RPC
 
   // client side communication
@@ -63,11 +70,12 @@ package object cluster {
   case class GrantVote(term: Int) extends RPC
 
   // cluster management
-  case class Join(id: Int) extends RPC
+  case class Join(id: Int, actorPath: ActorPath) extends RPC
   case class Leave(id: Int) extends RPC
+  case object AlreadyInTransition extends RPC
   case class ReconfigureCluster(clusterConfiguration: ClusterConfiguration) extends RPC
 
-
+  case object Tick
 
 
 }
