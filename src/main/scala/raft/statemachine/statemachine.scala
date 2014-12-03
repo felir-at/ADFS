@@ -11,7 +11,20 @@ package object statemachine {
   //    es az innen elkuldott cuccok pedig egy ClientResponse wrapper classba, anelkul, hogy a traitet implementalo user errol barmit tudna,
   //    ezzel elkerulhetnenk az ilyen hibakat: unhandled event OK(Some(5)) in state Follower
 
+  case class ClientCommand[S](t: S)
+  case class ClientResponse[S](t: S)
 
+  sealed trait StateMachineDurability
+  case object InMemoryStatMmachine extends StateMachineDurability
+  case object OnDiskStateMachine extends StateMachineDurability
+
+  trait RaftStateMachineAdaptor[S, D] extends FSM[ClientCommand[S], Nothing] {
+    self: StateMachine[S, D] =>
+
+    type T <: StateMachineDurability
+
+
+  }
 
   /** The FSM whose state are replicated all over our cluster
     *
