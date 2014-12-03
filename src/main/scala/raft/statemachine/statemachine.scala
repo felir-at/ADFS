@@ -1,6 +1,8 @@
 package raft
 
-import akka.actor.{FSM, LoggingFSM}
+import akka.actor.{ActorRef, FSM, LoggingFSM}
+import raft.cluster.ClientCommand
+
 /**
  * Created by kosii on 2014. 10. 20..
  */
@@ -11,19 +13,45 @@ package object statemachine {
   //    es az innen elkuldott cuccok pedig egy ClientResponse wrapper classba, anelkul, hogy a traitet implementalo user errol barmit tudna,
   //    ezzel elkerulhetnenk az ilyen hibakat: unhandled event OK(Some(5)) in state Follower
 
-  case class ClientCommand[S](t: S)
-  case class ClientResponse[S](t: S)
+//  case class ClientCommand[S](t: S)
+//  case class ClientResponse[S](t: S)
+  case class AAA[S](index: Int, command: S)
 
-  sealed trait StateMachineDurability
-  case object InMemoryStatMmachine extends StateMachineDurability
-  case object OnDiskStateMachine extends StateMachineDurability
+  sealed trait StateMachineDurability {
+    def getLastApplied: Int
+    def setLastApplied(index: Int)
+  }
+  case class InMemoryStateMachine() extends StateMachineDurability {
+    var index = 0
+    override def getLastApplied: Int = index
 
-  trait RaftStateMachineAdaptor[S, D] extends FSM[ClientCommand[S], Nothing] {
-    self: StateMachine[S, D] =>
+    override def setLastApplied(index: Int): Unit = this.index = index
+  }
+  case class OnDiskStateMachine() extends StateMachineDurability {
+    override def getLastApplied: Int = ???
 
-    type T <: StateMachineDurability
+    override def setLastApplied(index: Int): Unit = ???
+  }
 
+//  trait StateMachineModule {
+//    trait StateMachineHandler {
+//      val stateMachine: ActorRef
+//      val stateMachineDurability: StateMachineDurability
+//    }
+//    type T <: StateMachineHandler
+//
+//    val handler: T
+//  }
 
+  trait RaftStateMachineAdaptor[S, D] extends FSM[S, D] {
+    selfRef: StateMachine[S, D] =>
+
+    val stateMachineDurability: selfRef.StateMachineDurability
+
+    override def receive = {
+      case AAA(index, command) => self.tell(command, sender())
+      case otherWise => super.receive(otherWise)
+    }
   }
 
   /** The FSM whose state are replicated all over our cluster
@@ -40,6 +68,7 @@ package object statemachine {
       * @return
       */
     def lastApplied: Option[Int]
+    type StateMachineDurability <: StateMachineDurability
   }
 
 
@@ -62,6 +91,8 @@ package object statemachine {
 
 
   class KVStore extends StateMachine[StateName, StateData] with LoggingFSM[StateName, StateData] {
+    type StateMachineDurability = InMemoryStateMachine
+
     startWith(UniqueState, Data(None, Map()))
 
     when (UniqueState) {
