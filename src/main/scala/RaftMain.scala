@@ -16,7 +16,7 @@ import scala.language.postfixOps
  */
 object RaftMain extends App {
 
-  val commonConfig = ConfigFactory.load("application")
+  val commonConfig = ConfigFactory.load("application.conf")
 
   val system = ActorSystem("system", adfs.utils.remoteConfig("127.0.0.1", 2551, commonConfig))
 

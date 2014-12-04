@@ -1,7 +1,11 @@
 package raft
 
+import java.io._
+
 import akka.actor.{ActorRef, FSM, LoggingFSM}
+
 import raft.cluster.ClientCommand
+import scala.math.max
 
 /**
  * Created by kosii on 2014. 10. 20..
@@ -15,22 +19,31 @@ package object statemachine {
 
 //  case class ClientCommand[S](t: S)
 //  case class ClientResponse[S](t: S)
-  case class AAA[S](index: Int, command: S)
+  case class WrappedClientCommand[S](index: Int, command: S)
 
   sealed trait StateMachineDurability {
     def getLastApplied: Int
     def setLastApplied(index: Int)
   }
+
   case class InMemoryStateMachine() extends StateMachineDurability {
-    var index = 0
+    var index = -1
     override def getLastApplied: Int = index
 
-    override def setLastApplied(index: Int): Unit = this.index = index
+    override def setLastApplied(index: Int): Unit = this.index = max(index, getLastApplied)
   }
-  case class OnDiskStateMachine() extends StateMachineDurability {
-    override def getLastApplied: Int = ???
 
-    override def setLastApplied(index: Int): Unit = ???
+  case class OnDiskStateMachine(file: File) extends StateMachineDurability {
+
+    override def getLastApplied: Int = try {
+      new DataInputStream(new BufferedInputStream(new FileInputStream(file))).readInt()
+    } catch {
+      case fnfe: FileNotFoundException => -1
+      case e: Exception => throw e
+    }
+
+    override def setLastApplied(index: Int): Unit = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file))).writeInt(max(index, getLastApplied))
+
   }
 
 //  trait StateMachineModule {
@@ -46,10 +59,19 @@ package object statemachine {
   trait RaftStateMachineAdaptor[S, D] extends FSM[S, D] {
     selfRef: StateMachine[S, D] =>
 
-    val stateMachineDurability: selfRef.StateMachineDurability
+    val stateMachineDurability: selfRef.T
 
     override def receive = {
-      case AAA(index, command) => self.tell(command, sender())
+      case WrappedClientCommand(index, command) => {
+        println(s"forwarding cliend command ${command} with ${index}")
+        if (index <= stateMachineDurability.getLastApplied) {
+          // command already applied
+        } else {
+          self forward command
+//          self.tell(command, sender())
+          stateMachineDurability.setLastApplied(index)
+        }
+      }
       case otherWise => super.receive(otherWise)
     }
   }
@@ -67,8 +89,8 @@ package object statemachine {
       *
       * @return
       */
-    def lastApplied: Option[Int]
-    type StateMachineDurability <: StateMachineDurability
+//    def lastApplied: Option[Int]
+    type T <: StateMachineDurability
   }
 
 
@@ -76,7 +98,7 @@ package object statemachine {
   case object UniqueState extends StateName
 
   sealed trait StateData
-  case class Data(lastApplied: Option[Int], store: Map[String, Int]) extends StateData
+  case class Data(store: Map[String, Int]) extends StateData
 
   sealed trait Command
   case class SetValue(key: String, value: Int) extends Command
@@ -90,50 +112,59 @@ package object statemachine {
   case object RequestOutOfOrder extends Response
 
 
-  class KVStore extends StateMachine[StateName, StateData] with LoggingFSM[StateName, StateData] {
-    type StateMachineDurability = InMemoryStateMachine
+  class KVStore extends StateMachine[StateName, StateData] with RaftStateMachineAdaptor[StateName, StateData] with LoggingFSM[StateName, StateData] {
+//    type StateMachineDurability = InMemoryStateMachine
 
-    startWith(UniqueState, Data(None, Map()))
+    override type T = InMemoryStateMachine
+    override val stateMachineDurability: T = InMemoryStateMachine()
+
+    startWith(UniqueState, Data(Map()))
 
     when (UniqueState) {
       // TODO: itt igazabol az indexek ellenorzesenel azt kell ellenorizni, hogy az elkuldott parancs a soronkovetkezo indexet tartalmazza-e
       // TODO: mivel a cluster management parancsok miatt lehetnek kimarado indexek, emiatt azt kell ellenorizni, hogy az indexek szigoruan monoton nonek-e
       // TODO: de amugy az indexeket ebben a layerben nem kene mutatni (trello: http://goo.gl/SJ6gzL)
 
-      case Event((index: Int, SetValue(key, value)), Data(lastApplied, store)) => lastApplied match {
-        case Some(lastIndex) if (lastIndex < index) =>
-          stay using Data(Some(index), store + (key -> value)) replying OK
-        case None =>
-          stay using Data(Some(index), store + (key -> value)) replying OK
-        case _ =>
-          // already applied
-          stay replying OK
+      case Event(SetValue(key, value), Data(store)) => /*lastApplied match*/ {
+        stay using Data(store + (key -> value)) replying OK
+//        case Some(lastIndex) if (lastIndex < index) =>
+//        case None =>
+//          stay using Data(Some(index), store + (key -> value)) replying OK
+//        case _ =>
+//          // already applied
+//          stay replying OK
       }
 
-      case Event((index: Int, DeleteValue(key)), Data(lastApplied, store)) => lastApplied match {
-        case Some(lastIndex) if (lastIndex < index) =>
-          stay using Data(Some(index), store - key) replying OK
-        case None =>
-          stay using Data(Some(index), store - key) replying OK
-        case _ =>
-          stay replying OK
-      }
-      case Event((index: Int, GetValue(key)), Data(lastApplied, store)) => lastApplied match {
-        case Some(lastIndex) if (lastIndex < index) =>
-          stay using Data(Some(index), store) replying OK(store.lift(key))
-        case None =>
-          stay using Data(Some(index), store) replying OK(store.lift(key))
-        case _ =>
-          stay replying RequestOutOfOrder
-      }
+      case Event(DeleteValue(key), Data(store)) =>
+        stay using Data(store - key) replying OK
+//        lastApplied match {
+//        case Some(lastIndex) if (lastIndex < index) =>
+//          stay using Data(Some(index), store - key) replying OK
+//        case None =>
+//          stay using Data(Some(index), store - key) replying OK
+//        case _ =>
+//          stay replying OK
+//      }
+      case Event(GetValue(key), Data(store)) =>
+        stay using Data( store) replying OK(store.lift(key))
+
+//        lastApplied match {
+//          case Some(lastIndex) if (lastIndex < index) =>
+//            stay using Data(Some(index), store) replying OK(store.lift(key))
+//          case None =>
+//            stay using Data(Some(index), store) replying OK(store.lift(key))
+//          case _ =>
+//            stay replying RequestOutOfOrder
+//        }
 //          stay using Data(Some(index), store) replying OK(store.lift(key))
     }
 
-    override def lastApplied: Option[Int] = {
-      stateData match {
-        case Data(lastApplied, _) => lastApplied
-        case _ => None
-      }
-    }
+//    override def lastApplied: Option[Int] = {
+//      stateData match {
+//        case Data(lastApplied, _) => lastApplied
+//        case _ => None
+//      }
+//    }
+
   }
 }

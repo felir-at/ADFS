@@ -4,7 +4,7 @@ package raft.cluster
 import adfs.utils._
 import akka.actor.{ActorRef, FSM, Props}
 import raft.persistence.Persistence
-import raft.statemachine.StateMachine
+import raft.statemachine.{WrappedClientCommand, RaftStateMachineAdaptor, StateMachine}
 
 import scala.concurrent.duration._
 import scala.language.{higherKinds, postfixOps}
@@ -15,7 +15,7 @@ import scala.language.{higherKinds, postfixOps}
  */
 
 object RaftActor {
-  def props[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, minQuorumSize: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*): Props = {
+  def props[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, minQuorumSize: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*): Props = {
     Props(classOf[RaftActor[T, D, M]], id, clusterConfiguration, minQuorumSize, persistence, clazz, args)
   }
 
@@ -56,11 +56,12 @@ object RaftActor {
  * @param replicationFactor
  */
 
-class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends FSM[Role, Data] {
+class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends FSM[Role, Data] {
 
   def electionTimeout = NormalDistribution.nextGaussian(500, 40) milliseconds
 //  def currentTerm = persistence.getCurrentTerm
 
+  // TODO: nem a raft actornak kene peldanyositania, mert igy szar lesz a supervision hierarchy, vagy cake pattern kell, vagy pedig siman atadni
   val stateMachine = context.actorOf(Props(clazz, args: _*))
 
   startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration))
@@ -95,7 +96,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
             persistence.logsBetween(start + 1, stop + 1).zipWithIndex.map({
               case ((Right(command), actorRef), i) => {
                 log.info("appying stuff to the statemachine in the follower")
-                stateMachine ! (i + start, command)
+                stateMachine ! WrappedClientCommand(i + start + 1, command)
               }
               case ((Left(ReconfigureCluster(_clusterConfiguration)), actorRef), i) => {
                 log.info("committing changes in cluster configuration")
@@ -219,7 +220,7 @@ class RaftActor[T, D, M <: StateMachine[_, _]](id: Int, _clusterConfiguration: C
           log.debug(s"leader committing log entries between ${start+1} ${stop+1}")
           persistence.logsBetween(start + 1, stop + 1).zipWithIndex.map({
             case ((Right(command), actorRef), i) =>
-              stateMachine.tell((i + start, command), actorRef)
+              stateMachine.tell(WrappedClientCommand(i + start + 1, command), actorRef)
               None
             case ((Left(ReconfigureCluster(clusterConfiguration)), actorRef), i) =>
               // when we commit a reconfiguration, we should either create a new ReconfigureCluster message, either apply the final result of the reconfiguration
