@@ -4,6 +4,12 @@ import java.io._
 
 import akka.actor.{ActorRef, FSM, LoggingFSM}
 
+
+import org.iq80.leveldb._
+
+import org.iq80.leveldb.impl.Iq80DBFactory._
+import java.io.File
+
 import raft.cluster.ClientCommand
 import scala.math.max
 
@@ -46,6 +52,30 @@ package object statemachine {
 
   }
 
+  case class LevelDBStateMachine(db: DB) extends StateMachineDurability {
+    override def getLastApplied: Int = {
+//      val options: Options = new Options()
+//      options.createIfMissing(true)
+//      val db: DB = factory.open(new File(dbname), options)
+
+      val res = db.get(bytes("lastApplied"))
+      if (res == null) {
+        -1
+      } else {
+        asString(res).toInt
+      }
+    }
+
+    override def setLastApplied(index: Int): Unit = {
+
+//      val options: Options = new Options()
+//      options.createIfMissing(true)
+//      val db: DB = factory.open(new File(dbname), options)
+
+      val lastApplied = getLastApplied
+      db.put(bytes("lastApplied"), bytes(max(index, lastApplied).toString))
+    }
+  }
 //  trait StateMachineModule {
 //    trait StateMachineHandler {
 //      val stateMachine: ActorRef
