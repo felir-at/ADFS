@@ -21,26 +21,31 @@ package object cluster {
   case class ClusterConfiguration(currentConfig: Map[Int, ActorPath], newConfig: Option[Map[Int, ActorPath]])
 
 
-  sealed trait Data
+//  sealed trait Data
+  sealed trait ClusterState {
+    val clusterConfiguration: ClusterConfiguration
+    val commitIndex: Option[Int]
+//    val leaderId: Option[Int]
+  }
   case class FollowerState(
     clusterConfiguration: ClusterConfiguration,
     commitIndex: Option[Int] = None,
     leaderId: Option[Int] = None
-  ) extends Data
+  ) extends ClusterState
 
   case class CandidateState(
     clusterConfiguration: ClusterConfiguration,
     commitIndex: Option[Int],
     leaderId: Option[Int],
     numberOfVotes: Int
-  ) extends Data
+  ) extends ClusterState
 
   case class LeaderState(
     clusterConfiguration: ClusterConfiguration,
     commitIndex: Option[Int],
     nextIndex: Map[Int, Option[Int]],
     matchIndex: Map[Int, Option[Int]]
-  ) extends Data
+  ) extends ClusterState
 
 
   sealed trait RPC
@@ -76,6 +81,7 @@ package object cluster {
   case class ReconfigureCluster(clusterConfiguration: ClusterConfiguration) extends RPC
 
   case object Tick
+  case object ElectionTimeout
 
 
 }
