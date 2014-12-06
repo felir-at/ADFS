@@ -1,15 +1,26 @@
-import akka.actor.{ActorPath, ActorSystem, PoisonPill}
-import akka.cluster.Cluster
-import akka.pattern.ask
-import com.typesafe.config.ConfigFactory
-import raft.cluster._
-import raft.persistence.InMemoryPersistence
-import raft.statemachine._
-
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.language.postfixOps
+
+
+import akka.actor.{ActorPath, ActorSystem, PoisonPill}
+import akka.cluster.Cluster
+import akka.pattern.ask
+import com.typesafe.config.ConfigFactory
+
+
+import org.iq80.leveldb._
+import org.iq80.leveldb.impl.Iq80DBFactory._
+import java.io._
+
+
+import raft.cluster._
+import raft.persistence.{LevelDBPersistence, InMemoryPersistence}
+import raft.statemachine._
+
+
+
 
 /**
  * Created by kosii on 2014. 10. 18..
@@ -20,7 +31,13 @@ object RaftMain extends App {
 
   val system = ActorSystem("system", adfs.utils.remoteConfig("127.0.0.1", 2551, commonConfig))
 
-  val persistence1 = InMemoryPersistence()
+  val options: Options = new Options()
+  options.createIfMissing(true)
+
+  //  val persistence1 = InMemoryPersistence()
+  val db1: DB = factory.open(new File("persistence1"), options)
+  val persistence1 = LevelDBPersistence[Command, Map[String, Int]](db1)
+
   val persistence2 = InMemoryPersistence()
   val persistence3 = InMemoryPersistence()
 
