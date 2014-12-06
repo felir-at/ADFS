@@ -77,6 +77,11 @@ package object persistence {
     import scala.pickling._
     import binary._
 
+
+    private def setLastIndex(index: Option[Int]) {
+      db.put("lastIndex".pickle.value, index.pickle.value)
+    }
+
     /** Append log starting from prevLogIndex
       *
       * @param prevLogIndex
@@ -84,6 +89,13 @@ package object persistence {
       * @param entries
       */
     override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(Either[ReconfigureCluster, T], ActorRef)]): Unit = {
+      setLastIndex(prevLogIndex)
+
+      entries.zip(Stream from nextIndex) foreach {
+        case (entry, index) =>
+          db.put(index.pickle.value, (term, entry._1, entry._2).pickle.value)
+          setLastIndex(Some(index))
+      }
     }
 
     /** Append a single log entry at the end of the log
@@ -92,9 +104,8 @@ package object persistence {
       * @param entry
       */
     override def appendLog(term: Int, entry: Either[ReconfigureCluster, T], ref: ActorRef): Unit = {
-//      db.put(nextIndex.pickle.value, (term, entry, ref).pickle.value)
-
-
+      db.put(nextIndex.pickle.value, (term, entry, ref).pickle.value)
+      setLastIndex(Some(nextIndex))
     }
 
 
@@ -169,10 +180,9 @@ package object persistence {
       if (lastIndex == null) {
         None
       } else {
-        Some(BinaryPickleArray(lastIndex).unpickle[Int])
+        BinaryPickleArray(lastIndex).unpickle[Option[Int]]
       }
     }
-
 
     override def getCurrentTerm: Int = {
       val currentTerm = db.get(bytes("currentTerm"))
