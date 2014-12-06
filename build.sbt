@@ -10,10 +10,17 @@ scalacOptions += "-feature"
 
 scalacOptions += "-deprecation"
 
+val akkaVersion = "2.3.6"
+
 libraryDependencies ++=
   Seq(
-    "com.typesafe.akka" %% "akka-actor" % "2.3.6",
-    "com.typesafe.akka" %% "akka-cluster" % "2.3.6",
-    "com.typesafe.akka" %% "akka-testkit" % "2.3.6",
-    "org.scalatest" % "scalatest_2.11" % "2.2.1" % "test"
+    "com.typesafe.akka"          %% "akka-actor"                    % akkaVersion,
+    "com.typesafe.akka"          %% "akka-cluster"                  % akkaVersion,
+    "com.typesafe.akka"          %% "akka-testkit"                  % akkaVersion,
+    "org.iq80.leveldb"            % "leveldb"                       % "0.7",
+    "org.scala-lang"             %% "scala-pickling"                % "0.9.0",
+    "org.fusesource.leveldbjni"   % "leveldbjni-osx"                % "1.8",                             // New BSD
+    "org.scalatest"              %% "scalatest"                     % "2.2.1"               % "test"    // ApacheV2
   )
+
+fork := true
