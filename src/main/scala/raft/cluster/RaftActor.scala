@@ -268,6 +268,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
         stay replying TermExpired(persistence.getCurrentTerm)
       } else if (persistence.termMatches(lastLogIndex, lastLogIndex)) {
         if (isNew(term)) {
+          persistence.setCurrentTerm(term)
           persistence.clearVotedFor()
         }
         persistence.getVotedFor match {
