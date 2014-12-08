@@ -1,6 +1,8 @@
 package adfs
 
 import java.util.concurrent.ThreadLocalRandom
+import akka.actor.{ActorRef, ActorPath, ActorContext}
+import akka.actor.FSM.State
 
 import com.typesafe.config.{ConfigFactory, Config}
 
@@ -42,4 +44,20 @@ package object utils {
       sample( size / 2 - 1 )
     }
   }
+
+
+  implicit class StateOps[S, D](s: State[S, D])(implicit context: ActorContext) {
+
+    def sending(recipient: ActorPath, msg: Any): State[S, D] = {
+      context.actorSelection(recipient) ! msg
+      s
+    }
+
+    def sending(recipient: ActorRef, msg: Any): State[S, D] = {
+      recipient.tell(msg, context.self)
+      s
+    }
+
+  }
+
 }
