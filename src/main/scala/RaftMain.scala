@@ -77,7 +77,7 @@ object RaftMain extends App {
       "3")
 
 
-    Thread.sleep(3000)
+    Thread.sleep(5000)
 
 
 

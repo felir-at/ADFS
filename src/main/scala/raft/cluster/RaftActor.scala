@@ -64,7 +64,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
   // TODO: nem a raft actornak kene peldanyositania, mert igy szar lesz a supervision hierarchy, vagy cake pattern kell, vagy pedig siman atadni
   val stateMachine = context.actorOf(Props(clazz, args: _*))
 
-  startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration))
+  startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration, Some(persistence.getCurrentTerm)))
 
   def isStale(term: Int): Boolean = term < persistence.getCurrentTerm
   def isCurrent(term: Int): Boolean = term == persistence.getCurrentTerm
@@ -212,13 +212,21 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
 
   when(Candidate) {
     case Event(GrantVote(term), s: CandidateState) => {
-      // TODO: maybe we should check the term?
-      val numberOfVotes = s.numberOfVotes + 1
-      if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(s.clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
-        // TODO: we have to correctly fill out nextIndex and matchIndex
-        goto(Leader) using LeaderState(s.clusterConfiguration, s.commitIndex, Map(), Map())
+      val currentTerm = persistence.getCurrentTerm
+      if (isStale(term)) {
+        stay replying TermExpired(currentTerm)
+      } else if (isCurrent(term)) {
+        // TODO: maybe we should check the term?
+        val numberOfVotes = s.numberOfVotes + 1
+        if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(s.clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
+          // TODO: we have to correctly fill out nextIndex and matchIndex
+          goto(Leader) using LeaderState(s.clusterConfiguration, s.commitIndex, Map(), Map())
+        } else {
+          stay using s.copy(numberOfVotes = numberOfVotes)
+        }
       } else {
-        stay using s.copy(numberOfVotes = numberOfVotes)
+        log.info("WTF??!!? somebody granting votes for a future term! it's just crazy")
+        goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
       }
     }
 
@@ -226,7 +234,10 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       log.info(s"vote failed, only ${votes} votes")
       log.info("Candidate -> Candidate")
 
+
+      log.info("launching increment step")
       val currentTerm = persistence.incrementAndGetTerm
+      log.info("increment ended")
       for {
         (id, path) <- clusterConfiguration.currentConfig
         if (id != this.id)
@@ -270,17 +281,21 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
         if (isNew(term)) {
           persistence.setCurrentTerm(term)
           persistence.clearVotedFor()
-        }
-        persistence.getVotedFor match {
-          case None =>
-            persistence.setVotedFor(candidateId)
-            log.info(s"not yet voted, so voting for ${candidateId}")
-            stay replying GrantVote(term)
-          case Some(id) if (id == candidateId) =>
-            log.info(s"already voted for ${candidateId}, but voting again for ${candidateId}")
-            stay replying GrantVote(term)
-          case _ =>
-            stay
+          persistence.setVotedFor(candidateId)
+          goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
+        } else {
+          //isCurrent
+          persistence.getVotedFor match {
+            case None =>
+              persistence.setVotedFor(candidateId)
+              log.info(s"not yet voted, so voting for ${candidateId}")
+              stay replying GrantVote(term)
+            case Some(id) if (id == candidateId) =>
+              log.info(s"already voted for ${candidateId}, but voting again for ${candidateId}")
+              stay replying GrantVote(term)
+            case _ =>
+              stay
+          }
         }
       } else stay
     }
@@ -290,11 +305,8 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
 
       if (isStale(term)) {
         stay replying TermExpired(persistence.getCurrentTerm)
-      } else {
-        if (isNew(term)) {
-          persistence.setCurrentTerm(term)
-          persistence.clearVotedFor()
-        }
+      } else if (isCurrent(term)) {
+
         if (persistence.termMatches(prevLogIndex, prevLogTerm)) {
 
           // TODO: it's broken if there is interleaving cluster reconfiguration requests
@@ -335,6 +347,10 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
           stay replying InconsistentLog(this.id)
         }
 
+      } else {
+        persistence.setCurrentTerm(term)
+        persistence.clearVotedFor()
+        goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, Some(leaderId))
       }
 
     }
