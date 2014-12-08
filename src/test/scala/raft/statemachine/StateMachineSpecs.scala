@@ -5,7 +5,7 @@ import akka.util.Timeout
 import raft.statemachine.StateMachineSpecs.MockStateMachine
 import scala.concurrent.duration._
 import akka.actor.{ActorPath, FSM, ActorSystem}
-import akka.testkit.{TestActorRef, TestKit}
+import akka.testkit.{ImplicitSender, TestActorRef, TestKit}
 import akka.util.Timeout
 import com.typesafe.config.ConfigFactory
 import org.scalatest.concurrent.ScalaFutures
@@ -22,7 +22,7 @@ object StateMachineSpecs {
     startWith(None, None)
 
     when(None) {
-      case Event(_, None) => stay
+      case Event(_, None) => stay replying None
     }
 
     initialize()
@@ -31,7 +31,7 @@ object StateMachineSpecs {
   }
 
 }
-class StateMachineSpecs(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures {
+class StateMachineSpecs(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures with ImplicitSender{
   //  implicit val system = ActorSystem("MyActorSystem", ConfigFactory.load("test"))
   def this() = this(ActorSystem("MyActorSystem", ConfigFactory.load("test")))
 
@@ -44,12 +44,8 @@ class StateMachineSpecs(_system: ActorSystem) extends TestKit(_system) with Word
       val actorRef = TestActorRef[MockStateMachine]
       val actor = actorRef.underlyingActor
 
-      val r = actorRef ? "hello"
-      whenReady(r) { value =>
-        value should be {
-          statemachine.MissingClientActorPath
-        }
-      }
+      actorRef ! "hello"
+      expectMsg(statemachine.MissingClientActorPath)
 
       actor.stop()
     }
@@ -58,12 +54,8 @@ class StateMachineSpecs(_system: ActorSystem) extends TestKit(_system) with Word
       val actorRef = TestActorRef[MockStateMachine]
       val actor = actorRef.underlyingActor
 
-      val r = actorRef ? WrappedClientCommand(0, "hello")
-      whenReady(r) { value =>
-        value should be {
-          statemachine.MissingClientActorPath
-        }
-      }
+      actorRef ! WrappedClientCommand(0, "hello")
+      expectMsg(statemachine.MissingClientActorPath)
 
       actor.stop()
     }
@@ -72,12 +64,8 @@ class StateMachineSpecs(_system: ActorSystem) extends TestKit(_system) with Word
       val actorRef = TestActorRef[MockStateMachine]
       val actor = actorRef.underlyingActor
 
-      val r = actorRef ? WrappedClientCommand(-2, "hello")
-      whenReady(r) { value =>
-        value should be {
-          statemachine.MissingClientActorPath
-        }
-      }
+      actorRef ! WrappedClientCommand(-2, "hello")
+      expectMsg(statemachine.MissingClientActorPath)
 
       actor.stop()
     }
@@ -86,10 +74,8 @@ class StateMachineSpecs(_system: ActorSystem) extends TestKit(_system) with Word
       val actorRef = TestActorRef[MockStateMachine]
       val actor = actorRef.underlyingActor
 
-      val r = actorRef ? ("hello", testActorPath)
-      whenReady(r.failed) { e =>
-        e shouldBe a [AskTimeoutException]
-      }
+      actorRef ! Envelope("hello", self.path)
+      expectMsg(None)
 
       actor.stop()
 

@@ -46,11 +46,11 @@ package object statemachine {
     type T <: StateMachineDurability
 
     override def receive: Receive = {
-      case msg @ (command, path: ActorPath) =>
-        println(s"in the statemachine ${msg}")
+      case msg @ Envelope(command, path) =>
+        log.debug(s"in the statemachine ${msg}")
         super.receive(msg)
       case a =>
-        println(s"in the statemachine but no actorpath :( ${a}")
+        log.debug(s"in the statemachine but no actorpath :( ${a}")
         sender ! MissingClientActorPath
     }
   }
@@ -62,14 +62,14 @@ package object statemachine {
 
     abstract override def receive: Receive = {
       case WrappedClientCommand(index, command) => {
-        println(s"forwarding cliend command ${command} with ${index}. current last applied: ${stateMachineDurability.getLastApplied}")
+        log.debug(s"forwarding cliend command ${command} with ${index}. current last applied: ${stateMachineDurability.getLastApplied}")
         if (index <= stateMachineDurability.getLastApplied) {
-          println("\talready applied, sending back AlreadyApplied")
+          log.debug("\talready applied, sending back AlreadyApplied")
           // command already applied
           // TODO: send back a message to update the index in the cluster
           sender ! AlreadyApplied
         } else {
-          println("\tnot yet applied, apply and setLastApplied")
+          log.debug("\tnot yet applied, apply and setLastApplied")
           self forward command
 //          self.tell(command, sender())
           stateMachineDurability.setLastApplied(index)
