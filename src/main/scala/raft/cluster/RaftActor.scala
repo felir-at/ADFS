@@ -2,9 +2,9 @@ package raft.cluster
 
 
 import adfs.utils._
-import akka.actor.{ActorRef, FSM, Props}
+import akka.actor.{ActorPath, ActorRef, FSM, Props}
 import raft.persistence.Persistence
-import raft.statemachine.{WrappedClientCommand, RaftStateMachineAdaptor, StateMachine}
+import raft.statemachine.{Envelope, WrappedClientCommand, RaftStateMachineAdaptor, StateMachine}
 
 import scala.concurrent.duration._
 import scala.language.{higherKinds, postfixOps}
@@ -94,7 +94,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
   when(Leader) {
     case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       val ClientCommand(c) = t
-      persistence.appendLog(persistence.getCurrentTerm, Right(c), sender)
+      persistence.appendLog(persistence.getCurrentTerm, Right(c), sender.path)
       stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
     }
 
@@ -147,10 +147,10 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
 //          val start = commitIndex.getOrElse(-1)
           log.debug(s"leader committing log entries between ${start+1} ${stop+1}")
           persistence.logsBetween(start + 1, stop + 1).zipWithIndex.map({
-            case ((Right(command), actorRef), i) =>
-              stateMachine.tell(WrappedClientCommand(i + start + 1, command), actorRef)
+            case ((Right(command), actorPath), i) =>
+              stateMachine ! WrappedClientCommand(i + start + 1, Envelope(command, actorPath))
               None
-            case ((Left(ReconfigureCluster(clusterConfiguration)), actorRef), i) =>
+            case ((Left(ReconfigureCluster(clusterConfiguration)), actorPath), i) =>
               // when we commit a reconfiguration, we should either create a new ReconfigureCluster message, either apply the final result of the reconfiguration
               clusterConfiguration match {
                 case ClusterConfiguration(currentConfiguration, None) =>
@@ -160,7 +160,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
                   }
                 case ClusterConfiguration(currentConfiguration, Some(newConfiguration)) =>
                   val updatedClusterConfiguration  = ClusterConfiguration(newConfiguration, None)
-                  persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), self)
+                  persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), self.path)
               }
               Some(clusterConfiguration)
           })
@@ -187,7 +187,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       case None =>
         val updatedClusterConfiguration = ClusterConfiguration(clusterConfiguration.currentConfig, Some(clusterConfiguration.currentConfig + (peerId -> actorPath)))
         // we send back sender, so sender get alerted when the transition is ready
-        persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), sender())
+        persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), sender().path)
         stay using l.copy(clusterConfiguration = updatedClusterConfiguration)
 
       case Some(newConfig) =>
@@ -200,7 +200,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       case None =>
         val updatedClusterConfiguration = ClusterConfiguration(clusterConfiguration.currentConfig, Some(clusterConfiguration.currentConfig - _id))
         // we send back sender, so sender get alerted when the transition is ready
-        persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), sender())
+        persistence.appendLog(persistence.getCurrentTerm, Left(ReconfigureCluster(updatedClusterConfiguration)), sender().path)
         stay using l.copy(clusterConfiguration = updatedClusterConfiguration)
 
       case Some(newConfig) =>
@@ -286,7 +286,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
     }
 
     case Event(a: AppendEntries[T], s: ClusterState) => {
-      val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(Either[ReconfigureCluster, T], ActorRef)], leaderCommit: Option[Int]) = a
+      val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(Either[ReconfigureCluster, T], ActorPath)], leaderCommit: Option[Int]) = a
 
       if (isStale(term)) {
         stay replying TermExpired(persistence.getCurrentTerm)

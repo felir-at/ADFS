@@ -59,7 +59,7 @@ package object cluster {
     leaderId: Int,
     prevLogIndex: Option[Int],
     prevLogTerm: Option[Int],
-    entries: Seq[(Either[ReconfigureCluster, T], ActorRef)],
+    entries: Seq[(Either[ReconfigureCluster, T], ActorPath)],
     leaderCommit: Option[Int]
   ) extends RPC
   case class LogMatchesUntil(id: Int, matchIndex: Option[Int]) extends RPC
