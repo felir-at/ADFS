@@ -6,7 +6,7 @@ scalaVersion := "2.11.2"
 
 resolvers += "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
 
-scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature")
+scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-language:postfixOps")
 
 val akkaVersion = "2.3.6"
 
