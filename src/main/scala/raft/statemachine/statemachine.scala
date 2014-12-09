@@ -61,8 +61,8 @@ package object statemachine {
     val stateMachineDurability: super.T
 
     abstract override def receive: Receive = {
-      case WrappedClientCommand(index, command) => {
-        log.debug(s"forwarding cliend command ${command} with ${index}. current last applied: ${stateMachineDurability.getLastApplied}")
+      case WrappedClientCommand(index, e@Envelope(command, clientPath)) =>
+        log.debug(s"forwarding client command ${command} with ${index} from ${clientPath}. current last applied: ${stateMachineDurability.getLastApplied}")
         if (index <= stateMachineDurability.getLastApplied) {
           log.debug("\talready applied, sending back AlreadyApplied")
           // command already applied
@@ -70,11 +70,9 @@ package object statemachine {
           sender ! AlreadyApplied
         } else {
           log.debug("\tnot yet applied, apply and setLastApplied")
-          self forward command
-//          self.tell(command, sender())
           stateMachineDurability.setLastApplied(index)
+          super.receive(e)
         }
-      }
       case otherWise => super.receive(otherWise)
     }
   }

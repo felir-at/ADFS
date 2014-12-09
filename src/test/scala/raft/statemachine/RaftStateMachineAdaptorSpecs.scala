@@ -5,7 +5,7 @@ import raft.statemachine.RaftStateMachineAdaptorSpecs.MockRaftStateMachine
 
 import scala.concurrent.duration._
 
-import akka.actor.{FSM, ActorSystem}
+import akka.actor.{ActorPath, FSM, ActorSystem}
 import akka.pattern.ask
 import akka.testkit.{TestActorRef, TestKit}
 import akka.util.Timeout
@@ -41,13 +41,14 @@ class RaftStateMachineAdaptorSpecs (_system: ActorSystem) extends TestKit(_syste
   def this() = this(ActorSystem("MyActorSystem", ConfigFactory.load("test")))
 
   implicit val timeout = Timeout(3 seconds)
+  val testActorPath = ActorPath.fromString("akka.tcp://system/user/a")
 
   "RaftAdaptorShould" should {
     "respond with AlreadyApplied if index is too low" in {
       val actorRef = TestActorRef[MockRaftStateMachine]
       val actor = actorRef.underlyingActor
 
-      val r = actorRef ? WrappedClientCommand(-1, "hello")
+      val r = actorRef ? WrappedClientCommand(-1, Envelope("hello", testActorPath))
       whenReady(r) { value =>
         value should be {
           statemachine.AlreadyApplied
