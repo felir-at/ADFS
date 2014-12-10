@@ -2,6 +2,7 @@ package raft.cluster
 
 
 import adfs.utils._
+import akka.actor.FSM.Failure
 import akka.actor.{ActorPath, ActorRef, FSM, Props}
 import raft.persistence.Persistence
 import raft.statemachine.{Envelope, WrappedClientCommand, RaftStateMachineAdaptor, StateMachine}
@@ -65,19 +66,28 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
   val stateMachine = context.actorOf(Props(clazz, args: _*))
 
   startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration, Some(persistence.getCurrentTerm)))
+  // 2 * electionTimeout because ElectionTimeout should be consistently less frequent than heartbeats to avoid
+  //    elections all the time
+  setTimer("electionTimer", ElectionTimeout, 2 * electionTimeout, true)
 
   def isStale(term: Int): Boolean = term < persistence.getCurrentTerm
   def isCurrent(term: Int): Boolean = term == persistence.getCurrentTerm
   def isNew(term: Int): Boolean = persistence.getCurrentTerm < term
 
 
-  when(Follower, stateTimeout = 2 * electionTimeout) {
+  when(Follower/*, stateTimeout = 2 * electionTimeout*/) {
 
-    case Event(StateTimeout, FollowerState(clusterConfiguration, commitIndex, leaderId)) => {
-      println("No heartbeat received since")
+//    case Event(StateTimeout, FollowerState(clusterConfiguration, commitIndex, leaderId)) => {
+//      println("No heartbeat received since")
+//      goto(Candidate)
+//        .using(CandidateState(clusterConfiguration, commitIndex, leaderId, 0))
+//      //          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
+//    }
+
+    case Event(ElectionTimeout, FollowerState(clusterConfiguration, commitIndex, leaderId)) => {
+      log.info(s"ElectionTimeout in Candidate state in term ${persistence.getCurrentTerm}")
       goto(Candidate)
         .using(CandidateState(clusterConfiguration, commitIndex, leaderId, 0))
-      //          .forMax(utils.NormalDistribution.nextGaussian(500, 40) milliseconds)
     }
 
     case Event(t: ClientCommand[T], FollowerState(clusterConfiguration, commitIndex, leaderIdOpt)) => {
@@ -216,7 +226,6 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       if (isStale(term)) {
         stay replying TermExpired(currentTerm)
       } else if (isCurrent(term)) {
-        // TODO: maybe we should check the term?
         val numberOfVotes = s.numberOfVotes + 1
         if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(s.clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
           // TODO: we have to correctly fill out nextIndex and matchIndex
@@ -235,9 +244,9 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       log.info("Candidate -> Candidate")
 
 
-      log.info("launching increment step")
+      log.debug("launching increment step")
       val currentTerm = persistence.incrementAndGetTerm
-      log.info("increment ended")
+      log.debug("increment ended")
       for {
         (id, path) <- clusterConfiguration.currentConfig
         if (id != this.id)
@@ -253,6 +262,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
 
     }
   }
+
 
   def doThisUnlessTermExpired(term:Int)(currentTerm: =>State)(newTerm: =>State = goto(Follower)): State = {
     if (isStale(term)) {
@@ -282,6 +292,10 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
           persistence.setCurrentTerm(term)
           persistence.clearVotedFor()
           persistence.setVotedFor(candidateId)
+
+          cancelHeartbeatTimer()
+          setElectionTimer()
+
           goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
         } else {
           //isCurrent
@@ -306,11 +320,9 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       if (isStale(term)) {
         stay replying TermExpired(persistence.getCurrentTerm)
       } else if (isCurrent(term)) {
-
         if (persistence.termMatches(prevLogIndex, prevLogTerm)) {
-
-          // TODO: it's broken if there is interleaving cluster reconfiguration requests
-
+          //reset election timer
+          setElectionTimer()
           persistence.appendLog(prevLogIndex, persistence.getCurrentTerm, entries)
 
           for {
@@ -347,10 +359,16 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
           stay replying InconsistentLog(this.id)
         }
 
-      } else {
+      } else if (isNew(term)) {
         persistence.setCurrentTerm(term)
         persistence.clearVotedFor()
+
+        cancelElectionTimer()
+        setElectionTimer()
+
         goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, Some(leaderId))
+      } else {
+        stop(Failure(s"invalid term ${term} in AppendEntries message"))
       }
 
     }
@@ -360,13 +378,38 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
 
   }
 
+  /** (re)sets the timer used in Follower and Candidate states
+   *
+   */
+  def setElectionTimer(): Unit = {
+    setTimer("election", ElectionTimeout, electionTimeout * 2, true)
+  }
+  def cancelElectionTimer(): Unit = {
+    cancelTimer("election")
+  }
+  def isElectionTimerActive(): Boolean = {
+    isTimerActive("election")
+  }
+
+  def setHeartbeatTimer(): Unit = {
+    setTimer("heartbeat", Tick, electionTimeout, true)
+  }
+  def cancelHeartbeatTimer(): Unit = {
+    cancelTimer("heartbeat")
+  }
+  def isHeartbeatTimerActive(): Boolean = {
+    isTimerActive("heartbeat")
+  }
+
 
   onTransition {
 
     case Follower -> Candidate =>
       log.info("transition: Follower -> Candidate")
       log.info("starting election timer")
-      setTimer("electionTimer", ElectionTimeout, electionTimeout, false)
+
+      setElectionTimer()
+//      setTimer("electionTimer", ElectionTimeout, electionTimeout, false)
 
       nextStateData match {
         case CandidateState(clusterConfiguration, commitIndex, leaderId, numberOfVotes) =>
@@ -389,20 +432,25 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       }
 
     case Candidate -> Leader => {
-      cancelTimer("electionTimer")
-      setTimer("heartbeat", Tick, electionTimeout, true)
+      cancelElectionTimer()
+      setHeartbeatTimer()
+//      cancelTimer("electionTimer")
+//      setTimer("heartbeat", Tick, electionTimeout, true)
       log.info("transition: Candidate -> Leader")
 
     }
 
     case Candidate -> Follower => {
-      cancelTimer("electionTimer")
+      setElectionTimer()
+//      cancelTimer("electionTimer")
       log.info("transition: Candidate -> Follower")
 
     }
 
     case Leader -> Follower => {
-      cancelTimer("heartbeat")
+      cancelHeartbeatTimer()
+      setElectionTimer()
+//      cancelTimer("heartbeat")
       log.info("transition: Leader -> Follower")
 
     }

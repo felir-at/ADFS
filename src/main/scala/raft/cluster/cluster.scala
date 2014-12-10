@@ -80,7 +80,10 @@ package object cluster {
   case object AlreadyInTransition extends RPC
   case class ReconfigureCluster(clusterConfiguration: ClusterConfiguration) extends RPC
 
+  // used in the Leader state to trigger the heartbeat send
   case object Tick
+  // used in the Candidate state to trigger the end of the election
+  // used in the Follower state to become Candidate
   case object ElectionTimeout
 
 
