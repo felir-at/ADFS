@@ -66,16 +66,14 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
   val stateMachine = context.actorOf(Props(clazz, args: _*))
 
   startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration, Some(persistence.getCurrentTerm)))
-  // 2 * electionTimeout because ElectionTimeout should be consistently less frequent than heartbeats to avoid
-  //    elections all the time
-  setTimer("electionTimer", ElectionTimeout, 2 * electionTimeout, true)
+  setElectionTimer()
 
   def isStale(term: Int): Boolean = term < persistence.getCurrentTerm
   def isCurrent(term: Int): Boolean = term == persistence.getCurrentTerm
   def isNew(term: Int): Boolean = persistence.getCurrentTerm < term
 
 
-  when(Follower/*, stateTimeout = 2 * electionTimeout*/) {
+  when(Follower) {
 
 //    case Event(StateTimeout, FollowerState(clusterConfiguration, commitIndex, leaderId)) => {
 //      println("No heartbeat received since")
@@ -244,9 +242,9 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       log.info("Candidate -> Candidate")
 
 
-      log.debug("launching increment step")
+      log.info("launching increment step")
       val currentTerm = persistence.incrementAndGetTerm
-      log.debug("increment ended")
+      log.info("increment ended")
       for {
         (id, path) <- clusterConfiguration.currentConfig
         if (id != this.id)
@@ -275,20 +273,44 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
   }
 
   whenUnhandled {
-    case Event(TermExpired(term), s: ClusterState) => {
+    case Event(t@TermExpired(term), s: ClusterState) => {
+      log.info(s"${t} received from ${sender()}")
       if (term > persistence.getCurrentTerm) {
-        goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
+        log.info(s"${t} received with bigger term than currentTerm, but staying")
+//        goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
+        stay
       } else {
+        log.info(s"staying leader despite of ${t}")
         stay
       }
     }
 
     case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), s: ClusterState) => {
+      log.info(s"receiving vote request from ${sender} for term ${term}")
       if (isStale(term)) {
+        log.info(s"vote request for an old term, current term is ${persistence.getCurrentTerm}")
         // NOTE: § 5.1
-        stay replying TermExpired(persistence.getCurrentTerm)
-      } else if (persistence.termMatches(lastLogIndex, lastLogIndex)) {
+        // we should not send this, because we cannot be sure that our logs are committed, etc
+//        stay replying TermExpired(persistence.getCurrentTerm)
+        // hotfix:
+        stay
+      } else if ({
+        // the voter denies its vote if its own log is more up-to-date than that of the candidate.
+        // so votee should have a log at least as up-to-date as the candidate
+//        persistence.termMatches(lastLogIndex, lastLogIndex)
+
+        //If the logs have last entries with different terms
+        if (persistence.lastLogTerm != lastLogTerm) {
+          // then the log with the later term is more up-to-date
+          persistence.lastLogTerm.getOrElse(-1) <= lastLogTerm.getOrElse(-1)
+        } else {
+          // else whichever log is longer is more up-to-date.
+          persistence.lastLogIndex.getOrElse(-1) <= lastLogIndex.getOrElse(-1)
+        }
+      }) {
+
         if (isNew(term)) {
+          log.info(s"vote request for a new term, updating current term and granting vote")
           persistence.setCurrentTerm(term)
           persistence.clearVotedFor()
           persistence.setVotedFor(candidateId)
@@ -296,22 +318,29 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
           cancelHeartbeatTimer()
           setElectionTimer()
 
-          goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
+          goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None) replying GrantVote(term)
         } else {
           //isCurrent
+          log.info("vote request for the current term")
           persistence.getVotedFor match {
             case None =>
               persistence.setVotedFor(candidateId)
-              log.info(s"not yet voted, so voting for ${candidateId}")
+              log.info(s"vote not casted for this term, granting vote for ${candidateId}")
               stay replying GrantVote(term)
-            case Some(id) if (id == candidateId) =>
-              log.info(s"already voted for ${candidateId}, but voting again for ${candidateId}")
-              stay replying GrantVote(term)
-            case _ =>
+//            case Some(id) if (id == candidateId) =>
+//              log.warning(s"vote already casted for ${candidateId}, not voting again")
+////              log.info(s"already voted for ${candidateId}, but voting again for ${candidateId}")
+////              stay replying GrantVote(term)
+//              stay
+            case Some(id) =>
+              log.info(s"vote already casted for ${id}, not voting again")
               stay
           }
         }
-      } else stay
+      } else {
+        log.info(s"election safety criteria fails, refusing to vote")
+        stay
+      }
     }
 
     case Event(a: AppendEntries[T], s: ClusterState) => {
@@ -409,7 +438,6 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
       log.info("starting election timer")
 
       setElectionTimer()
-//      setTimer("electionTimer", ElectionTimeout, electionTimeout, false)
 
       nextStateData match {
         case CandidateState(clusterConfiguration, commitIndex, leaderId, numberOfVotes) =>
@@ -434,17 +462,12 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
     case Candidate -> Leader => {
       cancelElectionTimer()
       setHeartbeatTimer()
-//      cancelTimer("electionTimer")
-//      setTimer("heartbeat", Tick, electionTimeout, true)
       log.info("transition: Candidate -> Leader")
-
     }
 
     case Candidate -> Follower => {
       setElectionTimer()
-//      cancelTimer("electionTimer")
       log.info("transition: Candidate -> Follower")
-
     }
 
     case Leader -> Follower => {
