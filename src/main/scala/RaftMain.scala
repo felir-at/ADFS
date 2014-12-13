@@ -35,7 +35,10 @@ object RaftMain extends App {
   options.createIfMissing(true)
 
   //  val persistence1 = InMemoryPersistence()
-  val db1: DB = factory.open(new File("persistence1"), options)
+  val db1: DB = factory.open(new File("db/persistence1"), options)
+  import scala.pickling._
+  import binary._
+
   val persistence1 = LevelDBPersistence[Command, Map[String, Int]](db1)
 
   val persistence2 = InMemoryPersistence()
@@ -74,7 +77,7 @@ object RaftMain extends App {
       "3")
 
 
-    Thread.sleep(3000)
+    Thread.sleep(5000)
 
 
 
@@ -166,6 +169,8 @@ object RaftMain extends App {
     println("killing raft1")
     raft1 ! PoisonPill
 
+    db1.close()
+    system.shutdown()
   }
 
 

@@ -2,6 +2,7 @@
 relevant-papers/
 *.log
 dataDir/
+db/
 
 # sbt specific
 .cache/

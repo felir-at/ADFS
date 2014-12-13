@@ -1,6 +1,6 @@
 package raft
 
-import akka.actor.ActorRef
+import akka.actor.{ActorPath, ActorRef}
 import org.iq80.leveldb.DB
 import raft.cluster.ReconfigureCluster
 import raft.statemachine.Command
@@ -23,18 +23,18 @@ package object persistence {
      * @param term
      * @param entries
      */
-    def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(Either[ReconfigureCluster, T], ActorRef)]): Unit
+    def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(Either[ReconfigureCluster, T], ActorPath)]): Unit
 
     /** Append a single log entry at the end of the log
      *
      * @param term
      * @param entry
      */
-    def appendLog(term: Int, entry: Either[ReconfigureCluster, T], ref: ActorRef): Unit
+    def appendLog(term: Int, entry: Either[ReconfigureCluster, T], path: ActorPath): Unit
 
-    def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, T], ActorRef)]
+    def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, T], ActorPath)]
 
-    def logsBetween(start: Int, stop: Int): Seq[(Either[ReconfigureCluster, T], ActorRef)]
+    def logsBetween(start: Int, stop: Int): Seq[(Either[ReconfigureCluster, T], ActorPath)]
 
     /** Returns None if log is empty, otherwise returns Some(l-1), if log is of length l
       *
@@ -88,12 +88,12 @@ package object persistence {
       * @param term
       * @param entries
       */
-    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(Either[ReconfigureCluster, T], ActorRef)]): Unit = {
+    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(Either[ReconfigureCluster, T], ActorPath)]): Unit = {
       setLastIndex(prevLogIndex)
 
       entries.zip(Stream from nextIndex) foreach {
         case (entry, index) =>
-          db.put(index.pickle.value, (term, entry._1, entry._2).pickle.value)
+          db.put(index.pickle.value, (term, entry._1, entry._2.toSerializationFormat).pickle.value)
           setLastIndex(Some(index))
       }
     }
@@ -103,20 +103,21 @@ package object persistence {
       * @param term
       * @param entry
       */
-    override def appendLog(term: Int, entry: Either[ReconfigureCluster, T], ref: ActorRef): Unit = {
-      db.put(nextIndex.pickle.value, (term, entry, ref).pickle.value)
+    override def appendLog(term: Int, entry: Either[ReconfigureCluster, T], path: ActorPath): Unit = {
+      db.put(nextIndex.pickle.value, (term, entry, path.toSerializationFormat).pickle.value)
       setLastIndex(Some(nextIndex))
     }
 
 
 
-    override def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, T], ActorRef)] = {
+    override def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, T], ActorPath)] = {
 //      db.get()
       val entry = db.get(index.pickle.value)
       if (entry == null) {
         None
       } else {
-        Some(BinaryPickleArray(entry).unpickle[(Int, Either[ReconfigureCluster, T], ActorRef)])
+        val z = BinaryPickleArray(entry).unpickle[(Int, Either[ReconfigureCluster, T], String)]
+        Some((z._1, z._2, ActorPath.fromString(z._3)))
       }
 
     }
@@ -203,18 +204,18 @@ package object persistence {
         prevLogTerm == getTerm(index)
     }
 
-    override def logsBetween(start: Int, stop: Int): Seq[(Either[ReconfigureCluster, T], ActorRef)] = for {
+    override def logsBetween(start: Int, stop: Int): Seq[(Either[ReconfigureCluster, T], ActorPath)] = for {
       i <- start until stop
       entry <- getEntry(i)
     } yield (entry._2, entry._3)
   }
 
   case class InMemoryPersistence() extends Persistence[Command, Map[String, Int]] {
-    var logs = Vector[(Int, Either[ReconfigureCluster, Command], ActorRef)]()
+    var logs = Vector[(Int, Either[ReconfigureCluster, Command], ActorPath)]()
     var currentTerm: Int = 0
     var votedFor: Option[Int] = None
 
-    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(Either[ReconfigureCluster, Command], ActorRef)]): Unit = prevLogIndex match {
+    override def appendLog(prevLogIndex: Option[Int], term: Int, entries: Seq[(Either[ReconfigureCluster, Command], ActorPath)]): Unit = prevLogIndex match {
       case None => logs = entries.map(i => (term, i._1, i._2)).toVector
       case Some(index) => logs = logs.take(index + 1) ++ entries.map(i => (term, i._1, i._2))
     }
@@ -224,8 +225,8 @@ package object persistence {
       * @param term
       * @param entry
       */
-    override def appendLog(term: Int, entry: Either[ReconfigureCluster, Command], ref: ActorRef): Unit = {
-      logs = logs :+ ((term, entry, ref))
+    override def appendLog(term: Int, entry: Either[ReconfigureCluster, Command], path: ActorPath): Unit = {
+      logs = logs :+ ((term, entry, path))
     }
 
 
@@ -285,11 +286,11 @@ package object persistence {
 
 //    override def lastClusterConfigurationIndex: Option[Int] = ???
 
-    override def logsBetween(start: Int, stop: Int): Seq[(Either[ReconfigureCluster, Command], ActorRef)] = logs.slice(start, stop).map( i => (i._2, i._3) )
+    override def logsBetween(start: Int, stop: Int): Seq[(Either[ReconfigureCluster, Command], ActorPath)] = logs.slice(start, stop).map( i => (i._2, i._3) )
 
     override def nextIndex: Int = logs.size
 
-    override def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, Command], ActorRef)] = logs.lift(index)
+    override def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, Command], ActorPath)] = logs.lift(index)
   }
 
 }

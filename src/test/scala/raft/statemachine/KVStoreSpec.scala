@@ -3,7 +3,7 @@ package raft.statemachine.test
 
 import akka.actor.ActorSystem
 import akka.pattern.ask
-import akka.testkit.{TestActorRef, TestKit}
+import akka.testkit.{ImplicitSender, TestActorRef, TestKit}
 import akka.util.Timeout
 import com.typesafe.config.ConfigFactory
 import org.scalatest._
@@ -15,7 +15,9 @@ import scala.concurrent.duration._
 import scala.language.postfixOps
 
 
-class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures {
+class KVStoreSpec(_system: ActorSystem) extends TestKit(_system)
+                                              with WordSpecLike with Matchers with BeforeAndAfterAll
+                                              with ScalaFutures with ImplicitSender{
 //  implicit val system = ActorSystem("MyActorSystem", ConfigFactory.load("test"))
   def this() = this(ActorSystem("MyActorSystem", ConfigFactory.load("test")))
 
@@ -28,10 +30,12 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r = actorRef ? (1, SetValue("a", 5))
-      whenReady(r) { value =>
-        value should be { statemachine.OK }
-      }
+      assert(actor.stateMachineDurability.getLastApplied == -1)
+
+      actorRef ! WrappedClientCommand(1, Envelope(SetValue("a", 5), self.path))
+      expectMsg(statemachine.OK)
+
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
       actor.stop()
 
@@ -42,15 +46,11 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      val r1 = actorRef ? (1, SetValue("a", 5))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
+      actorRef ? WrappedClientCommand(1, Envelope(SetValue("a", 5), self.path))
+      expectMsg(statemachine.OK)
 
-      val r2 = actorRef ? (2, SetValue("a", 5))
-      whenReady(r2) { value =>
-        value should be { statemachine.OK }
-      }
+      actorRef ? WrappedClientCommand(2, Envelope(SetValue("a", 5), self.path))
+      expectMsg(statemachine.OK)
 
       actor.stop()
     }
@@ -62,11 +62,9 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
 
 
       assert(actor.stateMachineDurability.getLastApplied == -1)
-
-      val r1 = actorRef ? (1, GetValue("a"))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK(None) }
-      }
+//      WrappedClientCommand(1, Envelope(GetValue("a"), self.path))
+      actorRef ? WrappedClientCommand(1, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(None))
 
       assert(actor.stateMachineDurability.getLastApplied == 1)
 
@@ -78,21 +76,17 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
+      assert(actor.stateMachineDurability.getLastApplied == -1)
 
-      val r1 = actorRef ? (1, GetValue("a"))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK(None) }
-      }
+      actorRef ? WrappedClientCommand(1, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(None))
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
-      val r2 = actorRef ? (2, GetValue("a"))
-      whenReady(r2) { value =>
-        value should be { statemachine.OK(None) }
-      }
+      actorRef ? WrappedClientCommand(2, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(None))
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(2))
+      assert(actor.stateMachineDurability.getLastApplied == 2)
 
       actor.stop()
     }
@@ -102,21 +96,17 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
+      assert(actor.stateMachineDurability.getLastApplied == -1)
 
-      val r1 = actorRef ? (1, SetValue("a", 5))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
+      actorRef ? WrappedClientCommand(1, Envelope(SetValue("a", 5), self.path))
+      expectMsg(statemachine.OK)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
-      val r2 = actorRef ? (2, GetValue("a"))
-      whenReady(r2) { value =>
-        value should be { statemachine.OK(Some(5)) }
-      }
+      actorRef ? WrappedClientCommand(2, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(Some(5)))
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(2))
+      assert(actor.stateMachineDurability.getLastApplied == 2)
       actor.stop()
     }
 
@@ -124,13 +114,11 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
-      val r1 = actorRef ? (1, SetValue("a", 5))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
+      assert(actor.stateMachineDurability.getLastApplied == -1)
+      actorRef ? WrappedClientCommand(1, Envelope(SetValue("a", 5), self.path))
+      expectMsg(statemachine.OK)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
       actor.stop()
     }
 
@@ -138,35 +126,29 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
+      assert(actor.stateMachineDurability.getLastApplied == -1)
 
-      val r1 = actorRef ? (1, SetValue("a", 5))
+      actorRef ! WrappedClientCommand(1, Envelope(SetValue("a", 5), self.path))
 
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
+      expectMsg(statemachine.OK)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
-      val r2 = actorRef ? (2, GetValue("a"))
-      whenReady(r2) { value =>
-        value should be { statemachine.OK(Some(5)) }
-      }
-      assert(actor.stateMachineDurability.getLastApplied == Some(2))
+      actorRef ! WrappedClientCommand(2, Envelope(GetValue("a"), self.path))
 
-      val r3 = actorRef ? (3, SetValue("a", 10))
-      whenReady(r3) { value =>
-        value should be { statemachine.OK }
-      }
+      expectMsg(statemachine.OK(Some(5)))
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(3))
+      assert(actor.stateMachineDurability.getLastApplied == 2)
 
-      val r4 = actorRef ? (4, GetValue("a"))
-      whenReady(r4) { value =>
-        value should be { statemachine.OK(Some(10)) }
-      }
+      actorRef ! WrappedClientCommand(3, Envelope(SetValue("a", 10), self.path))
+      expectMsg(statemachine.OK)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(4))
+      assert(actor.stateMachineDurability.getLastApplied == 3)
+
+      actorRef ! WrappedClientCommand(4, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(Some(10)))
+
+      assert(actor.stateMachineDurability.getLastApplied == 4)
 
       actor.stop()
     }
@@ -175,14 +157,12 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
+      assert(actor.stateMachineDurability.getLastApplied == -1)
 
-      val r1  = actorRef ? (1, DeleteValue("a"))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
+      actorRef ! WrappedClientCommand(1, Envelope(DeleteValue("a"), self.path))
+      expectMsg(statemachine.OK)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
       actor.stop()
     }
 
@@ -190,28 +170,22 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
+      assert(actor.stateMachineDurability.getLastApplied == -1)
 
-      val r1 = actorRef ? (0, SetValue("a", 5))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
+      actorRef ! WrappedClientCommand(0, Envelope(SetValue("a", 5), self.path))
+      expectMsg(statemachine.OK)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(0))
+      assert(actor.stateMachineDurability.getLastApplied == 0)
 
-      val r2 = actorRef ? (1, GetValue("a"))
-      whenReady(r2) { value =>
-        value should be { statemachine.OK(Some(5)) }
-      }
+      actorRef ! WrappedClientCommand(1, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(Some(5)))
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
-      val r3  = actorRef ? (2, DeleteValue("a"))
-      whenReady(r3) { value =>
-        value should be { statemachine.OK }
-      }
+      actorRef ! WrappedClientCommand(2, Envelope(DeleteValue("a"), self.path))
+      expectMsg(statemachine.OK)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(2))
+      assert(actor.stateMachineDurability.getLastApplied == 2)
 
       actor.stop()
     }
@@ -221,21 +195,17 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
+      assert(actor.stateMachineDurability.getLastApplied == -1)
 
-      val r1 = actorRef ? (1, DeleteValue("a"))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
+      actorRef ! WrappedClientCommand(1, Envelope(DeleteValue("a"), self.path))
+      expectMsg(statemachine.OK)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
-      val r2 =actorRef ? (0, GetValue("a"))
-      whenReady(r2) { value =>
-        value should be { statemachine.RequestOutOfOrder }
-      }
+      actorRef ! WrappedClientCommand(0, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.AlreadyApplied)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
       actor.stop()
     }
@@ -244,36 +214,28 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
+      assert(actor.stateMachineDurability.getLastApplied == -1)
 
-      val r1 = actorRef ? (0, SetValue("a", 5))
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
-
-      assert(actor.stateMachineDurability.getLastApplied == Some(0))
-
-      val r2 = actorRef ? (1, GetValue("a"))
-      whenReady(r2) {value =>
-        value should be { statemachine.OK(Some(5))}
-      }
-
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      actorRef ! WrappedClientCommand(0, Envelope(SetValue("a", 5), self.path))
+      expectMsg(statemachine.OK)
 
 
-      val r3 = actorRef ? (1, SetValue("a", 10))
-      whenReady(r3) { value =>
-        value should be { statemachine.OK }
-      }
+      assert(actor.stateMachineDurability.getLastApplied == 0)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      actorRef ! WrappedClientCommand(1, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(Some(5)))
 
-      val r4 = actorRef ? (2, GetValue("a"))
-      whenReady(r4) {value =>
-        value should be { statemachine.OK(Some(5))}
-      }
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(2))
+
+      actorRef ! WrappedClientCommand(1, Envelope(SetValue("a", 10), self.path))
+      expectMsg(statemachine.AlreadyApplied)
+
+      assert(actor.stateMachineDurability.getLastApplied == 1)
+
+      actorRef ! WrappedClientCommand(2, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(Some(5)))
+      assert(actor.stateMachineDurability.getLastApplied == 2)
 
       actor.stop()
     }
@@ -282,37 +244,28 @@ class KVStoreSpec(_system: ActorSystem) extends TestKit(_system) with WordSpecLi
       val actorRef = TestActorRef[KVStore]
       val actor = actorRef.underlyingActor
 
-      assert(actor.stateMachineDurability.getLastApplied == None)
+      assert(actor.stateMachineDurability.getLastApplied == -1)
 
-      val r1 = actorRef ? (0, SetValue("a", 5))
+      actorRef ! WrappedClientCommand(0, Envelope(SetValue("a", 5), self.path))
+      expectMsg(statemachine.OK)
 
-      whenReady(r1) { value =>
-        value should be { statemachine.OK }
-      }
+      assert(actor.stateMachineDurability.getLastApplied == 0)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(0))
+      actorRef ! WrappedClientCommand(1, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(Some(5)))
 
-      val r2 = actorRef ? (1 ,GetValue("a"))
-      whenReady(r2) {value =>
-        value should be { statemachine.OK(Some(5))}
-      }
-
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
 
-      val r3 = actorRef ? (0, DeleteValue("a"))
-      whenReady(r3) { value =>
-        value should be { statemachine.OK }
-      }
+      actorRef ! WrappedClientCommand(0, Envelope(DeleteValue("a"), self.path))
+      expectMsg(statemachine.AlreadyApplied)
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(1))
+      assert(actor.stateMachineDurability.getLastApplied == 1)
 
-      val r4 = actorRef ? (2, GetValue("a"))
-      whenReady(r4) {value =>
-        value should be { statemachine.OK(Some(5))}
-      }
+      actorRef ! WrappedClientCommand(2, Envelope(GetValue("a"), self.path))
+      expectMsg(statemachine.OK(Some(5)))
 
-      assert(actor.stateMachineDurability.getLastApplied == Some(2))
+      assert(actor.stateMachineDurability.getLastApplied == 2)
 
       actor.stop()
     }

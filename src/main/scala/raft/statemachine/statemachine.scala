@@ -2,7 +2,7 @@ package raft
 
 import java.io._
 
-import akka.actor.{ActorRef, FSM, LoggingFSM}
+import akka.actor._
 
 
 import org.iq80.leveldb._
@@ -12,6 +12,8 @@ import java.io.File
 
 import raft.cluster.ClientCommand
 import scala.math.max
+
+import adfs.utils.StateOps
 
 /**
  * Created by kosii on 2014. 10. 20..
@@ -23,106 +25,64 @@ package object statemachine {
   //    es az innen elkuldott cuccok pedig egy ClientResponse wrapper classba, anelkul, hogy a traitet implementalo user errol barmit tudna,
   //    ezzel elkerulhetnenk az ilyen hibakat: unhandled event OK(Some(5)) in state Follower
 
-//  case class ClientCommand[S](t: S)
-//  case class ClientResponse[S](t: S)
+  // NOTE: why wrap command to unwrap them?
+
   case class WrappedClientCommand[S](index: Int, command: S)
-
-  sealed trait StateMachineDurability {
-    def getLastApplied: Int
-    def setLastApplied(index: Int)
-  }
-
-  case class InMemoryStateMachine() extends StateMachineDurability {
-    var index = -1
-    override def getLastApplied: Int = index
-
-    override def setLastApplied(index: Int): Unit = this.index = max(index, getLastApplied)
-  }
-
-  case class OnDiskStateMachine(file: File) extends StateMachineDurability {
-
-    override def getLastApplied: Int = try {
-      new DataInputStream(new BufferedInputStream(new FileInputStream(file))).readInt()
-    } catch {
-      case fnfe: FileNotFoundException => -1
-      case e: Exception => throw e
-    }
-
-    override def setLastApplied(index: Int): Unit = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file))).writeInt(max(index, getLastApplied))
-
-  }
-
-  case class LevelDBStateMachine(db: DB) extends StateMachineDurability {
-    override def getLastApplied: Int = {
-//      val options: Options = new Options()
-//      options.createIfMissing(true)
-//      val db: DB = factory.open(new File(dbname), options)
-
-      val res = db.get(bytes("lastApplied"))
-      if (res == null) {
-        -1
-      } else {
-        asString(res).toInt
-      }
-    }
-
-    override def setLastApplied(index: Int): Unit = {
-
-//      val options: Options = new Options()
-//      options.createIfMissing(true)
-//      val db: DB = factory.open(new File(dbname), options)
-
-      val lastApplied = getLastApplied
-      db.put(bytes("lastApplied"), bytes(max(index, lastApplied).toString))
-    }
-  }
-//  trait StateMachineModule {
-//    trait StateMachineHandler {
-//      val stateMachine: ActorRef
-//      val stateMachineDurability: StateMachineDurability
-//    }
-//    type T <: StateMachineHandler
-//
-//    val handler: T
-//  }
-
-  trait RaftStateMachineAdaptor[S, D] extends FSM[S, D] {
-    selfRef: StateMachine[S, D] =>
-
-    val stateMachineDurability: selfRef.T
-
-    override def receive = {
-      case WrappedClientCommand(index, command) => {
-        println(s"forwarding cliend command ${command} with ${index}")
-        if (index <= stateMachineDurability.getLastApplied) {
-          // command already applied
-        } else {
-          self forward command
-//          self.tell(command, sender())
-          stateMachineDurability.setLastApplied(index)
-        }
-      }
-      case otherWise => super.receive(otherWise)
-    }
-  }
 
   /** The FSM whose state are replicated all over our cluster
     *
     * @tparam S state name
     * @tparam D state data
     */
-  trait StateMachine[S, D] {
-    self: FSM[S, D] =>
+  trait StateMachine[S, D] extends FSM[S, D] {
+//    selfF: FSM[S, D] =>
 
     /** As D.Ongaro stated here https://groups.google.com/d/msg/raft-dev/KIozjYuq5m0/XsmYAzLpOikJ, lastApplied
       * should be as durable as the state machine
       *
       * @return
       */
-//    def lastApplied: Option[Int]
+    //    def lastApplied: Option[Int]
     type T <: StateMachineDurability
+
+    override def receive: Receive = {
+      case msg @ Envelope(command, path) =>
+        log.debug(s"in the statemachine ${msg}")
+        super.receive(msg)
+      case a =>
+        log.debug(s"in the statemachine but no actorpath :( ${a}")
+        sender ! MissingClientActorPath
+    }
   }
 
+
+  trait RaftStateMachineAdaptor[S, D] extends StateMachine[S, D] {
+
+    val stateMachineDurability: super.T
+
+    abstract override def receive: Receive = {
+      case WrappedClientCommand(index, e@Envelope(command, clientPath)) =>
+        log.debug(s"forwarding client command ${command} with ${index} from ${clientPath}. current last applied: ${stateMachineDurability.getLastApplied}")
+        if (index <= stateMachineDurability.getLastApplied) {
+          log.debug("\talready applied, sending back AlreadyApplied")
+          // command already applied
+          // TODO: send back a message to update the index in the cluster
+          sender ! AlreadyApplied
+        } else {
+          log.debug("\tnot yet applied, apply and setLastApplied")
+          stateMachineDurability.setLastApplied(index)
+          super.receive(e)
+        }
+      case otherWise => super.receive(otherWise)
+    }
+  }
+
+
+  object AlreadyApplied
+  object MissingClientActorPath
+
+
+  case class Envelope[T](t: T, client: ActorPath)
 
   sealed trait StateName
   case object UniqueState extends StateName
@@ -143,58 +103,16 @@ package object statemachine {
 
 
   class KVStore extends StateMachine[StateName, StateData] with RaftStateMachineAdaptor[StateName, StateData] with LoggingFSM[StateName, StateData] {
-//    type StateMachineDurability = InMemoryStateMachine
-
     override type T = InMemoryStateMachine
     override val stateMachineDurability: T = InMemoryStateMachine()
 
     startWith(UniqueState, Data(Map()))
 
     when (UniqueState) {
-      // TODO: itt igazabol az indexek ellenorzesenel azt kell ellenorizni, hogy az elkuldott parancs a soronkovetkezo indexet tartalmazza-e
-      // TODO: mivel a cluster management parancsok miatt lehetnek kimarado indexek, emiatt azt kell ellenorizni, hogy az indexek szigoruan monoton nonek-e
-      // TODO: de amugy az indexeket ebben a layerben nem kene mutatni (trello: http://goo.gl/SJ6gzL)
-
-      case Event(SetValue(key, value), Data(store)) => /*lastApplied match*/ {
-        stay using Data(store + (key -> value)) replying OK
-//        case Some(lastIndex) if (lastIndex < index) =>
-//        case None =>
-//          stay using Data(Some(index), store + (key -> value)) replying OK
-//        case _ =>
-//          // already applied
-//          stay replying OK
-      }
-
-      case Event(DeleteValue(key), Data(store)) =>
-        stay using Data(store - key) replying OK
-//        lastApplied match {
-//        case Some(lastIndex) if (lastIndex < index) =>
-//          stay using Data(Some(index), store - key) replying OK
-//        case None =>
-//          stay using Data(Some(index), store - key) replying OK
-//        case _ =>
-//          stay replying OK
-//      }
-      case Event(GetValue(key), Data(store)) =>
-        stay using Data( store) replying OK(store.lift(key))
-
-//        lastApplied match {
-//          case Some(lastIndex) if (lastIndex < index) =>
-//            stay using Data(Some(index), store) replying OK(store.lift(key))
-//          case None =>
-//            stay using Data(Some(index), store) replying OK(store.lift(key))
-//          case _ =>
-//            stay replying RequestOutOfOrder
-//        }
-//          stay using Data(Some(index), store) replying OK(store.lift(key))
+      case Event(Envelope(SetValue(key, value), client), Data(store)) => stay using Data(store + (key -> value)) sending(client, OK)
+      case Event(Envelope(DeleteValue(key), client), Data(store))     => stay using Data(store - key) sending(client, OK)
+      case Event(Envelope(GetValue(key), client), Data(store))        => stay using Data(store) sending(client, OK(store.lift(key)))
     }
-
-//    override def lastApplied: Option[Int] = {
-//      stateData match {
-//        case Data(lastApplied, _) => lastApplied
-//        case _ => None
-//      }
-//    }
-
   }
+
 }
