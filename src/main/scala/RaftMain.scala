@@ -4,7 +4,7 @@ import scala.concurrent.duration._
 import scala.language.postfixOps
 
 
-import akka.actor.{ActorPath, ActorSystem, PoisonPill}
+import akka.actor.{Inbox, ActorPath, ActorSystem, PoisonPill}
 import akka.cluster.Cluster
 import akka.pattern.ask
 import com.typesafe.config.ConfigFactory
@@ -83,7 +83,16 @@ object RaftMain extends App {
 
 //    val r = raft1 ? ClientCommand(GetValue("a"))
 
-    val r = Await.result(raft1 ? ClientCommand(GetValue("a")), 1 seconds)
+    implicit val inbox = Inbox.create(system)
+    implicit val actorRef = inbox.getRef()
+//    println(inbox.getRef())
+
+    raft1 ! ClientCommand(GetValue("a"))
+//    raft1 ! ClientCommand(GetValue("a"))
+//    raft1.tell
+    var r = inbox.receive(1 seconds)
+
+//    val r = Await.result(raft1 ? ClientCommand(GetValue("a")), 1 seconds)
 
     val leaderId = r match {
       case ReferToLeader(id) => {
@@ -102,53 +111,70 @@ object RaftMain extends App {
 
     val leaderPath = clusterConfigurationMap(leaderId)
 
-    system.actorSelection(leaderPath)
+//    system.actorSelection(leaderPath)
+    system.actorSelection(leaderPath) ! ClientCommand(SetValue("a", 5))
+    val r1 = inbox.receive(3 seconds)
+    assert(r1 == OK)
+    println(s"Setting 'a' -> 5\nthe result coming back from the cluster: ${r1}")
 
-
-
-    val r1 = system.actorSelection(leaderPath)  ? ClientCommand(SetValue("a", 5))
-    r1.onComplete { t =>
-//      assert(t == Success(OK))
-      println(s"Setting 'a' -> 5\nthe result coming back from the cluster: ${t}")
-    }
+    //    val r1 = system.actorSelection(leaderPath) ? ClientCommand(SetValue("a", 5))
+//    r1.onComplete { t =>
+////      assert(t == Success(OK))
+//      println(s"Setting 'a' -> 5\nthe result coming back from the cluster: ${t}")
+//    }
 
     Thread.sleep(100)
 
-    val r2 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("a"))
-    r2.onComplete { t =>
-//      assert(t == Success(Some(5)))
-      println(s"Getting 'a'\nthe result coming back from the cluster: ${t}")
-    }
+    system.actorSelection(leaderPath) ! ClientCommand(GetValue("a"))
+    val r2 = inbox.receive(3 seconds)
+    assert(r2 == OK(Some(5)))
+    println(s"Getting 'a'\nthe result coming back from the cluster: ${r2}")
+//      r2.onComplete { t =>
+////      assert(t == Success(Some(5)))
+//      println(s"Getting 'a'\nthe result coming back from the cluster: ${t}")
+//    }
     Thread.sleep(100)
 
-    val r3 = system.actorSelection(leaderPath)  ? ClientCommand(SetValue("b", 10))
-    r3.onComplete { t =>
-//      assert(t == Success(OK))
-      println(s"Setting 'b' -> 10\nthe result coming back from the cluster: ${t}")
-    }
+    system.actorSelection(leaderPath) ! ClientCommand(SetValue("b", 10))
+    val r3 = inbox.receive(3 seconds)
+    assert(r3 == OK)
+    println(s"Setting 'b' -> 10\nthe result coming back from the cluster: ${r3}")
+//    r3.onComplete { t =>
+////      assert(t == Success(OK))
+//      println(s"Setting 'b' -> 10\nthe result coming back from the cluster: ${t}")
+//    }
     Thread.sleep(100)
 
-    val r4 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("b"))
-    r4.onComplete { t =>
-//      assert(t == Success(Some(10)))
-      println(s"Getting 'b'\nthe result coming back from the cluster: ${t}")
-    }
+    system.actorSelection(leaderPath) ! ClientCommand(GetValue("b"))
+    val r4 = inbox.receive(3 seconds)
+    assert(r4 == OK(Some(10)))
+    println(s"Getting 'b'\nthe result coming back from the cluster: ${r4}")
+//      r4.onComplete { t =>
+////      assert(t == Success(Some(10)))
+//      println(s"Getting 'b'\nthe result coming back from the cluster: ${t}")
+//    }
     Thread.sleep(100)
-
-    val r5 = system.actorSelection(leaderPath)  ? ClientCommand(DeleteValue("a"))
-    r5.onComplete { t =>
-//      assert(t == Success(OK))
-      println(s"Deleting 'a'\nthe result coming back from the cluster: ${t}")
-    }
+//
+    system.actorSelection(leaderPath) ! ClientCommand(DeleteValue("a"))
+    val r5 = inbox.receive(3 seconds)
+    assert(r5 == OK)
+    println(s"Deleting 'a'\nthe result coming back from the cluster: ${r5}")
+//      r5.onComplete { t =>
+////      assert(t == Success(OK))
+//      println(s"Deleting 'a'\nthe result coming back from the cluster: ${t}")
+//    }
     Thread.sleep(100)
-
-
-    val r6 = system.actorSelection(leaderPath)  ? ClientCommand(GetValue("a"))
-    r6.onComplete { t =>
-//      assert(t == Success(None))
-      println(s"Getting 'a'\nthe result coming back from the cluster: ${t}")
-    }
-
+//
+//
+    system.actorSelection(leaderPath) ! ClientCommand(GetValue("a"))
+    val r6 = inbox.receive(3 seconds)
+    assert(r6 == OK(None))
+    println(s"Getting 'a'\nthe result coming back from the cluster: ${r6}")
+//      r6.onComplete { t =>
+////      assert(t == Success(None))
+//      println(s"Getting 'a'\nthe result coming back from the cluster: ${t}")
+//    }
+//
     println("sleeping before joing")
 
     Thread.sleep(1000)
@@ -161,7 +187,7 @@ object RaftMain extends App {
       ),
       "4")
     system.actorSelection(leaderPath) ! Join(4, raft4.path)
-
+//
     println("sleeping")
     Thread.sleep(3000)
     println("end sleeping")

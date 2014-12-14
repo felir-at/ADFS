@@ -99,6 +99,49 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
   }
 
 
+  when(Candidate) {
+    case Event(GrantVote(term), s: CandidateState) => {
+      val currentTerm = persistence.getCurrentTerm
+      if (isStale(term)) {
+        stay replying TermExpired(currentTerm)
+      } else if (isCurrent(term)) {
+        val numberOfVotes = s.numberOfVotes + 1
+        if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(s.clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
+          // TODO: we have to correctly fill out nextIndex and matchIndex
+          goto(Leader) using LeaderState(s.clusterConfiguration, s.commitIndex, Map(), Map())
+        } else {
+          stay using s.copy(numberOfVotes = numberOfVotes)
+        }
+      } else {
+        log.info("WTF??!!? somebody granting votes for a future term! it's just crazy")
+        goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
+      }
+    }
+
+    case Event(ElectionTimeout, CandidateState(clusterConfiguration, commitIndex, leaderId, votes)) => {
+      log.info(s"vote failed, only ${votes} votes")
+      log.info("Candidate -> Candidate")
+
+
+      log.info("launching increment step")
+      val currentTerm = persistence.incrementAndGetTerm
+      log.info("increment ended")
+      for {
+        (id, path) <- clusterConfiguration.currentConfig
+        if (id != this.id)
+      } {
+        log.info(s"requesting vote from ${id} for term ${currentTerm}")
+        context.actorSelection(path) ! RequestVote(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm)
+      }
+      self ! GrantVote(currentTerm)
+
+
+      goto(Candidate) using CandidateState(clusterConfiguration, commitIndex, leaderId, 0)
+
+
+    }
+  }
+
   when(Leader) {
     case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       val ClientCommand(c) = t
@@ -118,8 +161,6 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
         }
         val nextIndex = nextIndexes.getOrElse(id, None).getOrElse(0)
 
-        // TODO: when sending heartbeat's we have to send them from the nextIndex and not just an empty `entries` sequence
-        // TODO: implemented, need to check
         log.info(s"follower ${id}'s nextIndex: ${nextIndex}")
         log.info("sending data with the heartbeat: " + persistence.logsBetween(nextIndex, persistence.nextIndex))
         context.actorSelection(path) ! AppendEntries(
@@ -152,7 +193,6 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
           stop <- newCommitIndex
           start <- commitIndex.orElse(Some(-1))
         } yield {
-//          val start = commitIndex.getOrElse(-1)
           log.debug(s"leader committing log entries between ${start+1} ${stop+1}")
           persistence.logsBetween(start + 1, stop + 1).zipWithIndex.map({
             case ((Right(command), actorPath), i) =>
@@ -216,49 +256,6 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
 
     }
 
-  }
-
-  when(Candidate) {
-    case Event(GrantVote(term), s: CandidateState) => {
-      val currentTerm = persistence.getCurrentTerm
-      if (isStale(term)) {
-        stay replying TermExpired(currentTerm)
-      } else if (isCurrent(term)) {
-        val numberOfVotes = s.numberOfVotes + 1
-        if (math.max((math.floor(replicationFactor/2) + 1), (math.floor(s.clusterConfiguration.currentConfig.size / 2) + 1)) <= numberOfVotes) {
-          // TODO: we have to correctly fill out nextIndex and matchIndex
-          goto(Leader) using LeaderState(s.clusterConfiguration, s.commitIndex, Map(), Map())
-        } else {
-          stay using s.copy(numberOfVotes = numberOfVotes)
-        }
-      } else {
-        log.info("WTF??!!? somebody granting votes for a future term! it's just crazy")
-        goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
-      }
-    }
-
-    case Event(ElectionTimeout, CandidateState(clusterConfiguration, commitIndex, leaderId, votes)) => {
-      log.info(s"vote failed, only ${votes} votes")
-      log.info("Candidate -> Candidate")
-
-
-      log.info("launching increment step")
-      val currentTerm = persistence.incrementAndGetTerm
-      log.info("increment ended")
-      for {
-        (id, path) <- clusterConfiguration.currentConfig
-        if (id != this.id)
-      } {
-        log.info(s"requesting vote from ${id} for term ${currentTerm}")
-        context.actorSelection(path) ! RequestVote(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm)
-      }
-      self ! GrantVote(currentTerm)
-
-
-      goto(Candidate) using CandidateState(clusterConfiguration, commitIndex, leaderId, 0)
-
-
-    }
   }
 
 
@@ -360,9 +357,11 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
           } yield {
             // TODO: we should really do something with last applied
             persistence.logsBetween(start + 1, stop + 1).zipWithIndex.map({
-              case ((Right(command), actorRef), i) => {
+              case ((Right(command), _), i) => {
                 log.info("appying stuff to the statemachine in the follower")
-                stateMachine ! WrappedClientCommand(i + start + 1, command)
+                // no need that clients send back the results
+                // TODO: actor path should be optional?
+                stateMachine ! WrappedClientCommand(i + start + 1, Envelope(command, context.system.deadLetters.path))
               }
               case ((Left(ReconfigureCluster(_clusterConfiguration)), actorRef), i) => {
                 log.info("committing changes in cluster configuration")

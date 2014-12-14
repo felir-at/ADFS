@@ -109,9 +109,15 @@ package object statemachine {
     startWith(UniqueState, Data(Map()))
 
     when (UniqueState) {
-      case Event(Envelope(SetValue(key, value), client), Data(store)) => stay using Data(store + (key -> value)) sending(client, OK)
-      case Event(Envelope(DeleteValue(key), client), Data(store))     => stay using Data(store - key) sending(client, OK)
-      case Event(Envelope(GetValue(key), client), Data(store))        => stay using Data(store) sending(client, OK(store.lift(key)))
+      case Event(Envelope(s@SetValue(key, value), client), Data(store)) =>
+        log.info(s"executin ${s}")
+        stay using Data(store + (key -> value)) sending(client, OK)
+      case Event(Envelope(d@DeleteValue(key), client), Data(store))     =>
+        log.info(s"execute ${d}")
+        stay using Data(store - key) sending(client, OK)
+      case Event(Envelope(g@GetValue(key), client), Data(store))        =>
+        log.info(s"execute ${g}")
+        stay using Data(store) sending(client, OK(store.lift(key)))
     }
   }
 
