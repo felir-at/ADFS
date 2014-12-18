@@ -258,7 +258,6 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
 
   }
 
-
   def doThisUnlessTermExpired(term:Int)(currentTerm: =>State)(newTerm: =>State = goto(Follower)): State = {
     if (isStale(term)) {
       stay replying TermExpired(persistence.getCurrentTerm)
