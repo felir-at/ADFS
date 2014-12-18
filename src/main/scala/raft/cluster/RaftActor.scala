@@ -57,7 +57,7 @@ object RaftActor {
  * @param replicationFactor
  */
 
-class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends FSM[Role, ClusterState] {
+case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends FSM[Role, ClusterState] {
 
   def electionTimeout = NormalDistribution.nextGaussian(500, 40) milliseconds
 //  def currentTerm = persistence.getCurrentTerm

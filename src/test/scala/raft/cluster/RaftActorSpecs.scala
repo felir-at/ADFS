@@ -11,7 +11,7 @@ import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.{BeforeAndAfterAll, Matchers, WordSpecLike}
 import raft.cluster._
 import raft.persistence.{InMemoryPersistence, Persistence}
-import raft.statemachine.{KVStore, StateMachine}
+import raft.statemachine.{RaftStateMachineAdaptor, KVStore, StateMachine}
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -91,7 +91,7 @@ class RaftActorObjectSpecs extends WordSpecLike with Matchers with BeforeAndAfte
 class RaftActorSpecs(_system: ActorSystem) extends TestKit(_system) with WordSpecLike with Matchers with BeforeAndAfterAll with ScalaFutures {
 
 
-  class NoTimeoutRaftActor[T, D, M <: StateMachine[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends RaftActor[T, D, M](id, clusterConfiguration, replicationFactor, persistence, clazz, args:_*) {
+  class NoTimeoutRaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, clusterConfiguration: ClusterConfiguration, replicationFactor: Int, persistence: Persistence[T, D], clazz: Class[M], args: Any*) extends RaftActor[T, D, M](id, clusterConfiguration, replicationFactor, persistence, clazz, args:_*) {
     override def electionTimeout = 21474835/2 seconds
   }
 
@@ -106,7 +106,7 @@ class RaftActorSpecs(_system: ActorSystem) extends TestKit(_system) with WordSpe
     "start in FollowerState" in {
       val persistence = InMemoryPersistence()
       val fakeActorPath = RootActorPath(Address("akka.tcp", "system"))
-      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1"), Map(), None)
+      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1"), None)
 
       val actorRef = TestFSMRef(new NoTimeoutRaftActor(1, clusterConfiguration, 1, persistence, classOf[KVStore]))
       val actor = actorRef.underlyingActor
@@ -118,7 +118,7 @@ class RaftActorSpecs(_system: ActorSystem) extends TestKit(_system) with WordSpe
 
       val persistence = InMemoryPersistence()
       val fakeActorPath = RootActorPath(Address("akka.tcp", "system"))
-      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1", 2 -> fakeActorPath/"2"), Map(), None)
+      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1", 2 -> fakeActorPath/"2"), None)
       //      val props =
       val actorRef = TestFSMRef(new NoTimeoutRaftActor(1, clusterConfiguration, 1, persistence, classOf[KVStore]))
       val actor = actorRef.underlyingActor
@@ -134,7 +134,7 @@ class RaftActorSpecs(_system: ActorSystem) extends TestKit(_system) with WordSpe
 
       val persistence = InMemoryPersistence()
       val fakeActorPath = RootActorPath(Address("akka.tcp", "system"))
-      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1"), Map(), None)
+      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1"), None)
       //      val props =
       val actorRef = TestFSMRef(new NoTimeoutRaftActor(1, clusterConfiguration, 1, persistence, classOf[KVStore]))
       val actor = actorRef.underlyingActor
@@ -151,16 +151,17 @@ class RaftActorSpecs(_system: ActorSystem) extends TestKit(_system) with WordSpe
 
       val persistence = InMemoryPersistence()
       val fakeActorPath = RootActorPath(Address("akka.tcp", "system"))
-      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1", 2 -> fakeActorPath/"2"), Map(), None)
+      val clusterConfiguration = ClusterConfiguration(Map(1 -> fakeActorPath/"1", 2 -> fakeActorPath/"2"), None)
       //      val props =
       val actorRef = TestFSMRef(new NoTimeoutRaftActor(1, clusterConfiguration, 1, persistence, classOf[KVStore]))
       val actor = actorRef.underlyingActor
 
       actor.stateName should be { Follower }
-      
-      actor.currentTerm should be { 0 }
+
+      actor.persistence.getCurrentTerm should be { 0 }
+
       val future: Future[Any] = actorRef ? AppendEntries(1, 2, None, None, Seq(), None)
-      actor.currentTerm should be { 1  }
+      actor.persistence.getCurrentTerm should be { 1  }
 
       val Success(logMatching) = future.value.get
 
