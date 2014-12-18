@@ -133,6 +133,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
         log.info(s"requesting vote from ${id} for term ${currentTerm}")
         context.actorSelection(path) ! RequestVote(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm)
       }
+      persistence.setVotedFor(this.id)
       self ! GrantVote(currentTerm)
 
 
@@ -380,8 +381,14 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
           clusterConfigurationsToApply foreach { l =>
             log.info(s"changing clusterConfiguration from ${s.clusterConfiguration} to ${l}!")
           }
-
-          stay using FollowerState(clusterConfiguration = clusterConfigurationsToApply.getOrElse(s.clusterConfiguration), commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
+          {
+            if (stateName == Candidate)
+              goto(Follower)
+            else if (stateName == Follower)
+              stay
+            else
+              stop(FSM.Failure("receiving AppendEntries for current term when we are supposed to be the Leader"))
+          } using FollowerState(clusterConfiguration = clusterConfigurationsToApply.getOrElse(s.clusterConfiguration), commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
           stay replying InconsistentLog(this.id)
         }
@@ -448,6 +455,7 @@ class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _clusterConfi
             context.actorSelection(path) ! RequestVote(currentTerm, this.id, persistence.lastLogIndex, persistence.lastLogTerm)
           }
           log.info("voting for self")
+          persistence.setVotedFor(this.id)
           self ! GrantVote(currentTerm)
 
         case s@LeaderState(_, _, _, _) =>

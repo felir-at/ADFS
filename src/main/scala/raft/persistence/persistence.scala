@@ -10,6 +10,8 @@ import org.iq80.leveldb._
 import org.iq80.leveldb.impl.Iq80DBFactory._
 import java.io.File
 
+import scala.pickling.{SPickler, FastTypeTag}
+
 /**
  * Created by kosii on 2014. 10. 26..
  */
@@ -73,7 +75,7 @@ package object persistence {
 
   }
 
-  case class LevelDBPersistence[T, D](db: DB) extends Persistence[T, D] {
+  case class LevelDBPersistence[T: SPickler : FastTypeTag, D](db: DB) extends Persistence[T, D] {
     import scala.pickling._
     import binary._
 
