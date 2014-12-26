@@ -69,7 +69,7 @@ package object statemachine {
           log.debug("\talready applied, sending back AlreadyApplied")
           // command already applied
           // TODO: send back a message to update the index in the cluster
-          sender ! AlreadyApplied
+          sender ! AlreadyApplied(stateMachineDurability.getLastApplied + 1)
         } else {
           log.debug("\tnot yet applied, apply and setLastApplied")
           stateMachineDurability.setLastApplied(index)
@@ -80,7 +80,7 @@ package object statemachine {
   }
 
 
-  object AlreadyApplied
+  case class AlreadyApplied(nextIndex: Int)
   object MissingClientActorPath
 
 
@@ -169,7 +169,6 @@ package object statemachine {
         }
 
         reader.endEntry()
-        println(s"unpickled ${command}")
 
         command
       }

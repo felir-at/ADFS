@@ -2,7 +2,7 @@ package raft
 
 import akka.actor.{ActorPath, ActorRef}
 import org.iq80.leveldb.DB
-import raft.cluster.ReconfigureCluster
+import raft.cluster.{ClusterConfiguration, ReconfigureCluster}
 import raft.statemachine.Command
 
 
@@ -99,7 +99,12 @@ package object persistence {
 
       entries.zip(Stream from nextIndex) foreach {
         case ((Left(command: ReconfigureCluster), actorPath: ActorPath), index: Int)  =>
-//          db.put(index.pickle.value, command.pickle.value)
+          val index = nextIndex
+          //        db.put(nextIndex.pickle.value, (term, command, actorPath.toSerializationFormat).pickle.value)
+
+          db.put((index + "_term").pickle.value, term.pickle.value)
+          db.put((index + "_value").pickle.value, toSerializationFormat(command).pickle.value)
+          db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
           setLastIndex(Some(index))
         case ((Right(command: T), actorPath: ActorPath), index: Int) =>
           db.put((index + "_term").pickle.value, term.pickle.value)
@@ -109,6 +114,22 @@ package object persistence {
       }
     }
 
+    def mapToSerializationFormat(clusterConfigurationMap: Map[Int, ActorPath]) = for {
+      (k, v) <- clusterConfigurationMap
+    } yield (k, v.toSerializationFormat)
+
+    def mapFromSerializationFormat(serializedClusterConfigurationMap: Map[Int, String]) = for {
+      (k, v) <- serializedClusterConfigurationMap
+    } yield (k, ActorPath.fromString(v))
+
+    def toSerializationFormat(command: ReconfigureCluster) = command match {
+      case ReconfigureCluster(ClusterConfiguration(currentConfig, newConfig)) =>
+        (mapToSerializationFormat(currentConfig), newConfig map mapToSerializationFormat)
+    }
+    def fromSerializationFormat(r: (Map[Int, String], Option[Map[Int, String]])) = r match {
+      case (c, optC) => ReconfigureCluster(ClusterConfiguration(mapFromSerializationFormat(c), optC map mapFromSerializationFormat))
+    }
+
     /** Append a single log entry at the end of the log
       *
       * @param term
@@ -116,30 +137,46 @@ package object persistence {
       */
     override def appendLog(term: Int, entry: Either[ReconfigureCluster, T], actorPath: ActorPath): Unit = entry match {
       case Left(command) =>
-//        db.put(nextIndex.pickle.value, (term, command, path.toSerializationFormat).pickle.value)
-        setLastIndex(Some(nextIndex))
+        val index = nextIndex
+//        db.put(nextIndex.pickle.value, (term, command, actorPath.toSerializationFormat).pickle.value)
+
+        db.put((index + "_term").pickle.value, term.pickle.value)
+        db.put((index + "_value").pickle.value, toSerializationFormat(command).pickle.value)
+        db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
+        setLastIndex(Some(index))
       case Right(command) =>
         val index = nextIndex
         db.put((index + "_term").pickle.value, term.pickle.value)
         db.put((index + "_value").pickle.value, command.pickle.value)
         db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
-        setLastIndex(Some(nextIndex))
+        setLastIndex(Some(index))
     }
 
 
 
     override def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, T], ActorPath)] = {
-//      db.get()
-//      val entry = db.get((index + "_term").pickle.value)
       for {
         term <- Option(db.get((index + "_term").pickle.value))
         value <- Option(db.get((index + "_value").pickle.value))
         actorPathString <- Option(db.get((index + "_path").pickle.value))
       } yield {
-        println(s"readddd ${term} ${value} ${actorPathString}")
-        (BinaryPickleArray(term).unpickle[Int],
-        Right(BinaryPickleArray(value).unpickle[T]),
-        ActorPath.fromString(BinaryPickleArray(actorPathString).unpickle[String]))
+        Try {
+          BinaryPickleArray(value).unpickle[(Map[Int, String], Option[Map[Int, String]])]
+        } match {
+          case Failure(err) => (
+            BinaryPickleArray(term).unpickle[Int],
+            Right(BinaryPickleArray(value).unpickle[T]),
+            ActorPath.fromString(BinaryPickleArray(actorPathString).unpickle[String])
+          )
+          case Success(v) => (
+            BinaryPickleArray(term).unpickle[Int],
+            Left(fromSerializationFormat(v)),
+            ActorPath.fromString(BinaryPickleArray(actorPathString).unpickle[String])
+          )
+        }
+//        (BinaryPickleArray(term).unpickle[Int],
+//        Right(BinaryPickleArray(value).unpickle[T]),
+//        ActorPath.fromString(BinaryPickleArray(actorPathString).unpickle[String]))
 
       }
     }
@@ -215,6 +252,7 @@ package object persistence {
         BinaryPickleArray(currentTerm).unpickle[Int]
       }
     }
+
     override def setCurrentTerm(term: Int): Unit = {
       db.put(bytes("currentTerm"), term.pickle.value)
     }
