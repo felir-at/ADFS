@@ -339,6 +339,9 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
         stay
       }
     }
+//    case Event(AlreadyApplied(nextIndex), s: ClusterState) => {
+//
+//    }
 
     case Event(a: AppendEntries[T], s: ClusterState) => {
       val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(Either[ReconfigureCluster, T], ActorPath)], leaderCommit: Option[Int]) = a
