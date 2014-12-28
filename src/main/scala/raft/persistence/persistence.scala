@@ -2,7 +2,7 @@ package raft
 
 import akka.actor.{ActorPath, ActorRef}
 import org.iq80.leveldb.DB
-import raft.cluster.ReconfigureCluster
+import raft.cluster.{ClusterConfiguration, ReconfigureCluster}
 import raft.statemachine.Command
 
 
@@ -10,7 +10,10 @@ import org.iq80.leveldb._
 import org.iq80.leveldb.impl.Iq80DBFactory._
 import java.io.File
 
-import scala.pickling.{SPickler, FastTypeTag}
+import raft.statemachine.Command.CommandPickling
+
+import scala.pickling.{DPickler, Unpickler, SPickler, FastTypeTag}
+import scala.util.{Try, Success, Failure}
 
 /**
  * Created by kosii on 2014. 10. 26..
@@ -75,9 +78,10 @@ package object persistence {
 
   }
 
-  case class LevelDBPersistence[T: SPickler : FastTypeTag, D](db: DB) extends Persistence[T, D] {
+  case class LevelDBPersistence[T: SPickler : Unpickler : FastTypeTag, D](db: DB) extends Persistence[T, D] {
     import scala.pickling._
     import binary._
+
 
 
     private def setLastIndex(index: Option[Int]) {
@@ -94,10 +98,36 @@ package object persistence {
       setLastIndex(prevLogIndex)
 
       entries.zip(Stream from nextIndex) foreach {
-        case (entry, index) =>
-          db.put(index.pickle.value, (term, entry._1, entry._2.toSerializationFormat).pickle.value)
+        case ((Left(command: ReconfigureCluster), actorPath: ActorPath), index: Int)  =>
+          val index = nextIndex
+          //        db.put(nextIndex.pickle.value, (term, command, actorPath.toSerializationFormat).pickle.value)
+
+          db.put((index + "_term").pickle.value, term.pickle.value)
+          db.put((index + "_value").pickle.value, toSerializationFormat(command).pickle.value)
+          db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
+          setLastIndex(Some(index))
+        case ((Right(command: T), actorPath: ActorPath), index: Int) =>
+          db.put((index + "_term").pickle.value, term.pickle.value)
+          db.put((index + "_value").pickle.value, command.pickle.value)
+          db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
           setLastIndex(Some(index))
       }
+    }
+
+    def mapToSerializationFormat(clusterConfigurationMap: Map[Int, ActorPath]) = for {
+      (k, v) <- clusterConfigurationMap
+    } yield (k, v.toSerializationFormat)
+
+    def mapFromSerializationFormat(serializedClusterConfigurationMap: Map[Int, String]) = for {
+      (k, v) <- serializedClusterConfigurationMap
+    } yield (k, ActorPath.fromString(v))
+
+    def toSerializationFormat(command: ReconfigureCluster) = command match {
+      case ReconfigureCluster(ClusterConfiguration(currentConfig, newConfig)) =>
+        (mapToSerializationFormat(currentConfig), newConfig map mapToSerializationFormat)
+    }
+    def fromSerializationFormat(r: (Map[Int, String], Option[Map[Int, String]])) = r match {
+      case (c, optC) => ReconfigureCluster(ClusterConfiguration(mapFromSerializationFormat(c), optC map mapFromSerializationFormat))
     }
 
     /** Append a single log entry at the end of the log
@@ -105,23 +135,50 @@ package object persistence {
       * @param term
       * @param entry
       */
-    override def appendLog(term: Int, entry: Either[ReconfigureCluster, T], path: ActorPath): Unit = {
-      db.put(nextIndex.pickle.value, (term, entry, path.toSerializationFormat).pickle.value)
-      setLastIndex(Some(nextIndex))
+    override def appendLog(term: Int, entry: Either[ReconfigureCluster, T], actorPath: ActorPath): Unit = entry match {
+      case Left(command) =>
+        val index = nextIndex
+//        db.put(nextIndex.pickle.value, (term, command, actorPath.toSerializationFormat).pickle.value)
+
+        db.put((index + "_term").pickle.value, term.pickle.value)
+        db.put((index + "_value").pickle.value, toSerializationFormat(command).pickle.value)
+        db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
+        setLastIndex(Some(index))
+      case Right(command) =>
+        val index = nextIndex
+        db.put((index + "_term").pickle.value, term.pickle.value)
+        db.put((index + "_value").pickle.value, command.pickle.value)
+        db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
+        setLastIndex(Some(index))
     }
 
 
 
     override def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, T], ActorPath)] = {
-//      db.get()
-      val entry = db.get(index.pickle.value)
-      if (entry == null) {
-        None
-      } else {
-        val z = BinaryPickleArray(entry).unpickle[(Int, Either[ReconfigureCluster, T], String)]
-        Some((z._1, z._2, ActorPath.fromString(z._3)))
-      }
+      for {
+        term <- Option(db.get((index + "_term").pickle.value))
+        value <- Option(db.get((index + "_value").pickle.value))
+        actorPathString <- Option(db.get((index + "_path").pickle.value))
+      } yield {
+        Try {
+          BinaryPickleArray(value).unpickle[(Map[Int, String], Option[Map[Int, String]])]
+        } match {
+          case Failure(err) => (
+            BinaryPickleArray(term).unpickle[Int],
+            Right(BinaryPickleArray(value).unpickle[T]),
+            ActorPath.fromString(BinaryPickleArray(actorPathString).unpickle[String])
+          )
+          case Success(v) => (
+            BinaryPickleArray(term).unpickle[Int],
+            Left(fromSerializationFormat(v)),
+            ActorPath.fromString(BinaryPickleArray(actorPathString).unpickle[String])
+          )
+        }
+//        (BinaryPickleArray(term).unpickle[Int],
+//        Right(BinaryPickleArray(value).unpickle[T]),
+//        ActorPath.fromString(BinaryPickleArray(actorPathString).unpickle[String]))
 
+      }
     }
 
     override def snapshot: D = ???
@@ -195,6 +252,7 @@ package object persistence {
         BinaryPickleArray(currentTerm).unpickle[Int]
       }
     }
+
     override def setCurrentTerm(term: Int): Unit = {
       db.put(bytes("currentTerm"), term.pickle.value)
     }

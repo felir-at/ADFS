@@ -15,6 +15,8 @@ import scala.math.max
 
 import adfs.utils.StateOps
 
+import scala.pickling._
+
 /**
  * Created by kosii on 2014. 10. 20..
  */
@@ -67,7 +69,7 @@ package object statemachine {
           log.debug("\talready applied, sending back AlreadyApplied")
           // command already applied
           // TODO: send back a message to update the index in the cluster
-          sender ! AlreadyApplied
+          sender ! AlreadyApplied(stateMachineDurability.getLastApplied + 1)
         } else {
           log.debug("\tnot yet applied, apply and setLastApplied")
           stateMachineDurability.setLastApplied(index)
@@ -78,7 +80,7 @@ package object statemachine {
   }
 
 
-  object AlreadyApplied
+  case class AlreadyApplied(nextIndex: Int)
   object MissingClientActorPath
 
 
@@ -94,6 +96,85 @@ package object statemachine {
   case class SetValue(key: String, value: Int) extends Command
   case class DeleteValue(key: String) extends Command
   case class GetValue(key: String) extends Command
+
+  object Command {
+    class CommandPickling(implicit val format: PickleFormat) extends SPickler[Command] with Unpickler[Command] {
+      override def pickle(picklee: Command, builder: PBuilder): Unit = picklee match {
+        case sv@SetValue(key: String, value: Int) =>
+          builder.beginEntry(sv)
+          builder.putField("type", { b =>
+            b.hintTag(FastTypeTag.String).beginEntry("set").endEntry()
+          })
+          builder.putField("key", { b =>
+            b.hintTag(FastTypeTag.String).beginEntry(key).endEntry()
+          })
+          builder.putField("value", { b =>
+            b.hintTag(FastTypeTag.Int).beginEntry(value).endEntry()
+          })
+          builder.endEntry()
+        case gv@GetValue(key) =>
+          builder.beginEntry(gv)
+          builder.putField("type", { b =>
+            b.hintTag(FastTypeTag.String).beginEntry("get").endEntry()
+          })
+          builder.putField("key", { b =>
+            b.hintTag(FastTypeTag.String).beginEntry(key).endEntry()
+          })
+          builder.endEntry()
+        case dv@DeleteValue(key) =>
+          builder.beginEntry(dv)
+          builder.putField("type", { b =>
+            b.hintTag(FastTypeTag.String).beginEntry("delete").endEntry()
+          })
+          builder.putField("key", { b =>
+            b.hintTag(FastTypeTag.String).beginEntry(key).endEntry()
+          })
+          builder.endEntry()
+      }
+
+      override def unpickle(tag: => FastTypeTag[_], reader: PReader): Any = {
+        reader.beginEntry()
+        val tpe = implicitly[Unpickler[String]].unpickle(
+          reader.beginEntry(), reader.readField("type")
+        ).asInstanceOf[String]
+        reader.endEntry()
+
+        val command: Command = tpe match {
+          case "get" =>
+            val tag = reader.beginEntry()
+            val key = implicitly[Unpickler[String]].unpickle(
+              tag, reader.readField("key")
+            ).asInstanceOf[String]
+            reader.endEntry()
+            GetValue(key)
+          case "set" =>
+            val keyTag = reader.beginEntry()
+            val key = implicitly[Unpickler[String]].unpickle(
+              keyTag, reader.readField("key")
+            ).asInstanceOf[String]
+            reader.endEntry()
+            val valueTag = reader.beginEntry()
+            val value = implicitly[Unpickler[Int]].unpickle(
+              keyTag, reader.readField("value")
+            ).asInstanceOf[Int]
+            reader.endEntry()
+            SetValue(key, value)
+          case "delete" =>
+            val tag = reader.beginEntry()
+            val key = implicitly[Unpickler[String]].unpickle(
+              tag, reader.readField("key")
+            ).asInstanceOf[String]
+            reader.endEntry()
+            DeleteValue(key)
+        }
+
+        reader.endEntry()
+
+        command
+      }
+
+    }
+  }
 
 
   sealed trait Response

@@ -5,7 +5,7 @@ import adfs.utils._
 import akka.actor.FSM.Failure
 import akka.actor.{ActorPath, ActorRef, FSM, Props}
 import raft.persistence.Persistence
-import raft.statemachine.{Envelope, WrappedClientCommand, RaftStateMachineAdaptor, StateMachine}
+import raft.statemachine._
 
 import scala.concurrent.duration._
 import scala.language.{higherKinds, postfixOps}
@@ -339,6 +339,9 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
         stay
       }
     }
+//    case Event(AlreadyApplied(nextIndex), s: ClusterState) => {
+//
+//    }
 
     case Event(a: AppendEntries[T], s: ClusterState) => {
       val AppendEntries(term: Int, leaderId: Int, prevLogIndex: Option[Int], prevLogTerm: Option[Int], entries: Seq[(Either[ReconfigureCluster, T], ActorPath)], leaderCommit: Option[Int]) = a
@@ -388,7 +391,18 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
               stay
             else
               stop(FSM.Failure("receiving AppendEntries for current term when we are supposed to be the Leader"))
-          } using FollowerState(clusterConfiguration = clusterConfigurationsToApply.getOrElse(s.clusterConfiguration), commitIndex = leaderCommit, leaderId = Some(leaderId)) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
+          } using FollowerState(
+            clusterConfiguration = clusterConfigurationsToApply.getOrElse(s.clusterConfiguration),
+            commitIndex = {
+              val m = Math.max(leaderCommit.getOrElse(-1), s.commitIndex.getOrElse(-1))
+              if (m == -1) {
+                None
+              } else {
+                Some(m)
+              }
+            },
+            leaderId = Some(leaderId)
+          ) replying LogMatchesUntil(this.id, persistence.lastLogIndex)
         } else {
           stay replying InconsistentLog(this.id)
         }

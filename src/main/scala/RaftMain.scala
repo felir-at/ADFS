@@ -1,3 +1,5 @@
+import raft.statemachine.Command.CommandPickling
+
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
@@ -39,6 +41,7 @@ object RaftMain extends App {
   import scala.pickling._
   import binary._
 
+  implicit val commandPickling = new CommandPickling()
   val persistence1 = LevelDBPersistence[Command, Map[String, Int]](db1)
 
   val persistence2 = InMemoryPersistence()
@@ -90,7 +93,7 @@ object RaftMain extends App {
     raft1 ! ClientCommand(GetValue("a"))
 //    raft1 ! ClientCommand(GetValue("a"))
 //    raft1.tell
-    var r = inbox.receive(1 seconds)
+    var r = inbox.receive(5 seconds)
 
 //    val r = Await.result(raft1 ? ClientCommand(GetValue("a")), 1 seconds)
 
