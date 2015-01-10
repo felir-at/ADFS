@@ -35,7 +35,7 @@ package object persistence {
      * @param term
      * @param entry
      */
-    def appendLog(term: Int, entry: Either[ReconfigureCluster, T], path: ActorPath): Unit
+    def appendLog(term: Int, entry: Either[ReconfigureCluster, T], path: ActorPath): Int
 
     def getEntry(index: Int): Option[(Int, Either[ReconfigureCluster, T], ActorPath)]
 
@@ -135,21 +135,23 @@ package object persistence {
       * @param term
       * @param entry
       */
-    override def appendLog(term: Int, entry: Either[ReconfigureCluster, T], actorPath: ActorPath): Unit = entry match {
-      case Left(command) =>
-        val index = nextIndex
-//        db.put(nextIndex.pickle.value, (term, command, actorPath.toSerializationFormat).pickle.value)
+    override def appendLog(term: Int, entry: Either[ReconfigureCluster, T], actorPath: ActorPath): Int = {
+      val index = nextIndex
+      entry match {
+        case Left(command) =>
+          //        db.put(nextIndex.pickle.value, (term, command, actorPath.toSerializationFormat).pickle.value)
 
-        db.put((index + "_term").pickle.value, term.pickle.value)
-        db.put((index + "_value").pickle.value, toSerializationFormat(command).pickle.value)
-        db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
-        setLastIndex(Some(index))
-      case Right(command) =>
-        val index = nextIndex
-        db.put((index + "_term").pickle.value, term.pickle.value)
-        db.put((index + "_value").pickle.value, command.pickle.value)
-        db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
-        setLastIndex(Some(index))
+          db.put((index + "_term").pickle.value, term.pickle.value)
+          db.put((index + "_value").pickle.value, toSerializationFormat(command).pickle.value)
+          db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
+          setLastIndex(Some(index))
+        case Right(command) =>
+          db.put((index + "_term").pickle.value, term.pickle.value)
+          db.put((index + "_value").pickle.value, command.pickle.value)
+          db.put((index + "_path").pickle.value, actorPath.toSerializationFormat.pickle.value)
+          setLastIndex(Some(index))
+      }
+      index
     }
 
 
@@ -285,8 +287,9 @@ package object persistence {
       * @param term
       * @param entry
       */
-    override def appendLog(term: Int, entry: Either[ReconfigureCluster, Command], path: ActorPath): Unit = {
+    override def appendLog(term: Int, entry: Either[ReconfigureCluster, Command], path: ActorPath): Int = {
       logs = logs :+ ((term, entry, path))
+      logs.length
     }
 
 
