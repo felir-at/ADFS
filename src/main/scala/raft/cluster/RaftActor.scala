@@ -3,7 +3,7 @@ package raft.cluster
 
 import adfs.utils._
 import akka.actor.FSM.Failure
-import akka.actor.{ActorPath, ActorRef, FSM, Props}
+import akka.actor._
 import raft.persistence.Persistence
 import raft.statemachine._
 
@@ -65,7 +65,7 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
   // TODO: nem a raft actornak kene peldanyositania, mert igy szar lesz a supervision hierarchy, vagy cake pattern kell, vagy pedig siman atadni
   val stateMachine = context.actorOf(Props(clazz, args: _*))
 
-  startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration, Some(persistence.getCurrentTerm)))
+  startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration, None))
   setElectionTimer()
 
   def isStale(term: Int): Boolean = term < persistence.getCurrentTerm
@@ -143,18 +143,24 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
     }
   }
 
+  def peers(clusterConfiguration: ClusterConfiguration): Map[Int, ActorPath] = clusterConfiguration.currentConfig ++ clusterConfiguration.newConfig.getOrElse(Map()) filter { case (id, path) => id != this.id}
+
+
   when(Leader) {
     case Event(t : ClientCommand[T], l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
+      log.info(s"client command received ${t} from ${sender}")
+
       val ClientCommand(c) = t
-      persistence.appendLog(persistence.getCurrentTerm, Right(c), sender.path)
-      stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)))
+      val m = persistence.appendLog(persistence.getCurrentTerm, Right(c), sender.path)
+      log.info(s"client command appended to log")
+      log.debug(s"next index updated for leader")
+      stay using l.copy(nextIndex = nextIndex + (this.id -> Some(persistence.nextIndex)), matchIndex = matchIndex + (this.id -> Some(m)))
     }
 
     case Event(Tick, l@LeaderState(clusterConfiguration, commitIndex, nextIndexes, matchIndex)) => {
-      log.info("It's time to send a heartbeat!!!")
+      log.info(s"sending heartbeat to followers")
       for {
-        (id, path) <- clusterConfiguration.currentConfig ++ clusterConfiguration.newConfig.getOrElse(Map())
-        if (id != this.id)
+        (id, path) <- peers(clusterConfiguration)
       } {
         val prevLogIndex = nextIndexes.getOrElse(id, None) match {
           case Some(i) if (i > 0) => Some(i - 1)
@@ -163,32 +169,36 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
         val nextIndex = nextIndexes.getOrElse(id, None).getOrElse(0)
 
         log.info(s"follower ${id}'s nextIndex: ${nextIndex}")
-        log.info("sending data with the heartbeat: " + persistence.logsBetween(nextIndex, persistence.nextIndex))
+        log.info(s"sending log entries form ${nextIndex} until ${persistence.nextIndex}")
         context.actorSelection(path) ! AppendEntries(
           persistence.getCurrentTerm, this.id, prevLogIndex, prevLogIndex.flatMap(persistence.getTerm(_)),
           persistence.logsBetween(nextIndex, persistence.nextIndex), commitIndex
         )
       }
-      log.info("we have sent so much heartbeat!!!")
+//      log.info("we have sent so much heartbeat!!!")
       stay using l
     }
 
-    case Event(GrantVote(term), l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
+    case Event(gv@GrantVote(term), l@LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
       if (term > persistence.getCurrentTerm) {
         log.info("Received GrantVote for a term in the future, becoming Follower")
         goto(Follower) using FollowerState(clusterConfiguration, commitIndex)
       } else {
-        log.info(s"Yo, I'm already the boss, but thanks ${sender}")
+        log.debug(s"${gv} received from ${sender}, I'm already Leader")
         stay
       }
     }
 
     case Event(l@LogMatchesUntil(peerId, _matchIndex), LeaderState(clusterConfiguration, commitIndex, nextIndex, matchIndex)) => {
-      log.debug(s"${l} received")
+      log.debug(s"log matches to ${_matchIndex} for peer ${peerId}")
       //TODO: verify if it's correct
+//      def updateNextIndex(nextIndex: Map[Int, Option[Int]], peerId: Int, )
       val newNextIndex: Map[Int, Option[Int]] = nextIndex + (peerId -> _matchIndex.map({ i => i + 1}) )
+      log.debug(s"update nextIndex from ${nextIndex} to ${newNextIndex}")
       val newMatchIndex = matchIndex + (peerId -> _matchIndex)
+      log.debug(s"update matchIndex from ${matchIndex} to ${newMatchIndex}")
       val newCommitIndex: Option[Int] = RaftActor.determineCommitIndex(clusterConfiguration, newMatchIndex)
+      log.debug(s"update commitIndex from ${commitIndex} to ${newCommitIndex}")
       if (commitIndex != newCommitIndex) {
         for {
           stop <- newCommitIndex
@@ -216,7 +226,7 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
         }
 
       } else {
-        log.debug("nothing to commit!!!")
+        log.debug("nothing to commit")
       }
       
 
@@ -283,7 +293,7 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
     }
 
     case Event(RequestVote(term, candidateId, lastLogIndex, lastLogTerm), s: ClusterState) => {
-      log.info(s"receiving vote request from ${sender} for term ${term}")
+      log.info(s"receiving vote request from ${candidateId} for term ${term}")
       if (isStale(term)) {
         log.info(s"vote request for an old term, current term is ${persistence.getCurrentTerm}")
         // NOTE: § 5.1
