@@ -98,7 +98,7 @@ package object persistence {
       setLastIndex(prevLogIndex)
 
       entries.zip(Stream from nextIndex) foreach {
-        case ((Left(command: ReconfigureCluster), actorPath: ActorPath), index: Int)  =>
+        case ((Left(command: ReconfigureCluster), actorPath: ActorPath), index: Int) =>
           val index = nextIndex
           //        db.put(nextIndex.pickle.value, (term, command, actorPath.toSerializationFormat).pickle.value)
 
@@ -238,7 +238,8 @@ package object persistence {
       *
       */
     override def lastLogIndex: Option[Int] = {
-      val lastIndex = db.get("lastIndex".pickle.value)
+      val key = "lastIndex".pickle.value
+      val lastIndex = db.get(key)
       if (lastIndex == null) {
         None
       } else {
