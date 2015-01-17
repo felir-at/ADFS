@@ -85,7 +85,7 @@ package object cluster {
   // used in the Candidate state to trigger the end of the election
   // used in the Follower state to become Candidate
   case object ElectionTimeout
-
+  case object HeartBeat
 
 }
 
