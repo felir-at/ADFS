@@ -1,3 +1,4 @@
+import raft.persistence.serialization.ScalaPicklingSerialization.ScalaPicklingSerialization
 import raft.statemachine.Command.CommandPickling
 
 import scala.concurrent.Await
@@ -13,7 +14,8 @@ import com.typesafe.config.ConfigFactory
 
 
 import org.iq80.leveldb._
-import org.iq80.leveldb.impl.Iq80DBFactory._
+//import org.iq80.leveldb.impl.Iq80DBFactory._
+import org.fusesource.leveldbjni.JniDBFactory._
 import java.io._
 
 
@@ -37,16 +39,19 @@ object RaftMain extends App {
   options.createIfMissing(true)
 
   //  val persistence1 = InMemoryPersistence()
-  val db1: DB = factory.open(new File("db/persistence1"), options)
-  import scala.pickling._
-  import binary._
 
-  implicit val commandPickling = new CommandPickling()
+  factory.repair(new File("db/persistence1"), options)
+  val db1: DB = factory.open(new File("db/persistence1"), options)
+//  val db2: DB = factory.open(new File("db/persistence2"), options)
+//  val db3: DB = factory.open(new File("db/persistence3"), options)
+
   val persistence1 = LevelDBPersistence[Command, Map[String, Int]](db1)
 
   val persistence2 = InMemoryPersistence()
   val persistence3 = InMemoryPersistence()
 
+//  val persistence2 = LevelDBPersistence[Command, Map[String, Int]](db2)
+//  val persistence3 = LevelDBPersistence[Command, Map[String, Int]](db3)
 
   val clusterConfigurationMap: Map[Int, ActorPath] = Map(
     1 -> ActorPath.fromString("akka://system/user/1"),
@@ -196,7 +201,7 @@ object RaftMain extends App {
     println("end sleeping")
     system.shutdown()
     println("killing raft1")
-    raft1 ! PoisonPill
+//    raft1 ! PoisonPill
 
     db1.close()
     system.shutdown()
