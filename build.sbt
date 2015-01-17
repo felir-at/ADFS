@@ -18,7 +18,9 @@ libraryDependencies ++=
     "org.iq80.leveldb"            % "leveldb"                       % "0.7",
     "org.scala-lang"             %% "scala-pickling"                % "0.9.0",
     "org.fusesource.leveldbjni"   % "leveldbjni-osx"                % "1.8",                             // New BSD
-    "org.scalatest"              %% "scalatest"                     % "2.2.1"               % "test"    // ApacheV2
+    "org.scalatest"              %% "scalatest"                     % "2.2.1"               % "test",    // ApacheV2,
+    "com.typesafe.play"          %% "play-json"                     % "2.3.4"
+
   )
 
 fork := true

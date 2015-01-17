@@ -67,6 +67,7 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
 
   startWith(stateName = Follower, stateData = FollowerState(_clusterConfiguration, None))
   setElectionTimer()
+  setLivenessTimer()
 
   def isStale(term: Int): Boolean = term < persistence.getCurrentTerm
   def isCurrent(term: Int): Boolean = term == persistence.getCurrentTerm
@@ -168,7 +169,9 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
         }
         val nextIndex = nextIndexes.getOrElse(id, None).getOrElse(0)
 
+        println(s"follower ${id}'s nextIndex: ${nextIndex}")
         log.info(s"follower ${id}'s nextIndex: ${nextIndex}")
+        println(s"sending log entries form ${nextIndex} until ${persistence.nextIndex}")
         log.info(s"sending log entries form ${nextIndex} until ${persistence.nextIndex}")
         context.actorSelection(path) ! AppendEntries(
           persistence.getCurrentTerm, this.id, prevLogIndex, prevLogIndex.flatMap(persistence.getTerm(_)),
@@ -280,6 +283,12 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
   }
 
   whenUnhandled {
+
+    case Event(HeartBeat, _) => {
+      println(s"member ${id} is still alive")
+      stay
+    }
+
     case Event(t@TermExpired(term), s: ClusterState) => {
       log.info(s"${t} received from ${sender()}")
       if (term > persistence.getCurrentTerm) {
@@ -447,6 +456,11 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
   }
   def isElectionTimerActive(): Boolean = {
     isTimerActive("election")
+  }
+
+
+  def setLivenessTimer(): Unit = {
+    setTimer("liveness", HeartBeat, 1 seconds, true)
   }
 
   def setHeartbeatTimer(): Unit = {
