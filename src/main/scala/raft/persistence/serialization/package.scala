@@ -138,8 +138,10 @@ package object serialization {
       override def serialize(t: Either[ReconfigureCluster, Command]): Array[Byte] = Json.toJson(t).toString.getBytes
       override def deserialize(d: Array[Byte]): Either[ReconfigureCluster, Command] = Json.fromJson[Either[ReconfigureCluster, Command]](Json.parse(d)).get
     }
-
   }
+
+
+  @deprecated
   object ScalaPicklingSerialization {
     sealed trait ScalaPicklingSerialization[T] extends Serialization[T, Array[Byte]]
     import scala.pickling._

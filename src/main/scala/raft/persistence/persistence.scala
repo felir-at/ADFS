@@ -2,11 +2,11 @@ package raft
 
 import akka.actor.{ActorPath, ActorRef}
 import com.google.common.primitives.Bytes
-import raft.persistence.serialization.ScalaPicklingSerialization
-import raft.persistence.serialization.ScalaPicklingSerialization.ScalaPicklingSerialization
-import raft.persistence.serialization.{ScalaPicklingSerialization, Serialization}
+
 import org.iq80.leveldb.DB
 import raft.cluster.{ClusterConfiguration, ReconfigureCluster}
+import raft.persistence.serialization.BinaryJsonSerialization.BinaryJsonSerialization
+import raft.persistence.serialization.Serialization
 import raft.statemachine.Command
 
 
@@ -14,9 +14,7 @@ import org.iq80.leveldb._
 import org.iq80.leveldb.impl.Iq80DBFactory._
 import java.io.File
 
-import raft.statemachine.Command.CommandPickling
 
-import scala.pickling.{DPickler, Unpickler, SPickler, FastTypeTag}
 import scala.util.{Try, Success, Failure}
 
 /**
@@ -82,11 +80,11 @@ package object persistence {
 
   }
 
-  case class LevelDBPersistence[T, D](db: DB)(implicit serializer: ScalaPicklingSerialization[Either[ReconfigureCluster, T]]) extends Persistence[T, D] {
+  case class LevelDBPersistence[T, D](db: DB)(implicit serializer: BinaryJsonSerialization[Either[ReconfigureCluster, T]]) extends Persistence[T, D] {
 
     import raft.persistence.serialization._
-    import ScalaPicklingSerialization._
-
+//    import ScalaPicklingSerialization._
+    import BinaryJsonSerialization._
     private def setLastIndex(index: Option[Int]) {
       db.put("lastIndex".serialize, index.serialize)
     }
@@ -199,7 +197,7 @@ package object persistence {
     }
 
     override def getCurrentTerm: Int = {
-      val currentTerm = db.get(bytes("currentTerm"))
+      val currentTerm = db.get("currentTerm".serialize)
       if (currentTerm == null) {
         0
       } else {
@@ -208,7 +206,7 @@ package object persistence {
     }
 
     override def setCurrentTerm(term: Int): Unit = {
-      db.put(bytes("currentTerm"), term.serialize)
+      db.put("currentTerm".serialize, term.serialize)
     }
 
     override def termMatches(prevLogIndex: Option[Int], prevLogTerm: Option[Int]): Boolean = prevLogIndex match {

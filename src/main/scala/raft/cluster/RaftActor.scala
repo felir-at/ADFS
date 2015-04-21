@@ -355,7 +355,11 @@ case class RaftActor[T, D, M <: RaftStateMachineAdaptor[_, _]](id: Int, _cluster
         }
       } else {
         log.info(s"election safety criteria fails, refusing to vote")
-        stay
+        if (isNew(term)) {
+          log.info(s" but resign from being leader")
+          goto(Follower) using FollowerState(s.clusterConfiguration, s.commitIndex, None)
+        } else
+          stay
       }
     }
 //    case Event(AlreadyApplied(nextIndex), s: ClusterState) => {

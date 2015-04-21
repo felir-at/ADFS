@@ -1,5 +1,3 @@
-import raft.persistence.serialization.ScalaPicklingSerialization.ScalaPicklingSerialization
-import raft.statemachine.Command.CommandPickling
 
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -42,16 +40,16 @@ object RaftMain extends App {
 
   factory.repair(new File("db/persistence1"), options)
   val db1: DB = factory.open(new File("db/persistence1"), options)
-//  val db2: DB = factory.open(new File("db/persistence2"), options)
-//  val db3: DB = factory.open(new File("db/persistence3"), options)
+  val db2: DB = factory.open(new File("db/persistence2"), options)
+  val db3: DB = factory.open(new File("db/persistence3"), options)
 
   val persistence1 = LevelDBPersistence[Command, Map[String, Int]](db1)
 
-  val persistence2 = InMemoryPersistence()
-  val persistence3 = InMemoryPersistence()
+//  val persistence2 = InMemoryPersistence()
+//  val persistence3 = InMemoryPersistence()
 
-//  val persistence2 = LevelDBPersistence[Command, Map[String, Int]](db2)
-//  val persistence3 = LevelDBPersistence[Command, Map[String, Int]](db3)
+  val persistence2 = LevelDBPersistence[Command, Map[String, Int]](db2)
+  val persistence3 = LevelDBPersistence[Command, Map[String, Int]](db3)
 
   val clusterConfigurationMap: Map[Int, ActorPath] = Map(
     1 -> ActorPath.fromString("akka://system/user/1"),
